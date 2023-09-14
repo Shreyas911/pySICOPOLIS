@@ -7,7 +7,7 @@ from pySICOPOLIS.backend.types import Figure, Colormap, Axes
 from pySICOPOLIS.backend.types import VectorNumpy, MatrixNumpy
 from pySICOPOLIS.backend.types import Optional, OptionalList
 
-__all__ = ["plot_normal", "plot_log"]
+__all__ = ["plot_normal", "plot_log", "plot_1D_depth_profile"]
 
 def get_cmap_rgb(cmap: Colormap,
 		 n_colors: int = 256) -> Colormap:
