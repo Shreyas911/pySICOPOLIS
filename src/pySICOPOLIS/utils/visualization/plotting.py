@@ -185,16 +185,16 @@ def plot_log(x: VectorNumpy,
 def plot_1D_depth_profile(field: VectorNumpy,
 	     depth: VectorNumpy,
 		 uncertField: Optional[VectorNumpy] = None,
-		 invert_yaxis: Optional[bool] = True,
+		 invert_yaxis: Optional[bool] = False,
 		 gridLines: Optional[bool] = True,
 	     fig: Optional[Figure] = None,
 	     ax: Optional[Axes] = None,
 	     **kwargs) -> Optional[Axes]:
 
 	"""
-	field : 1D array depth-wise (top to bottom) of field
+	field : 1D array depth-wise (bottom to top) of field
 	depth : 1D array of depths
-	uncertField : 1D array depth-wise (top to bottom) of 
+	uncertField : 1D array depth-wise (bottom to top) of 
 	            uncertainty in the field, optional
 	invert_yaxis : bool to invert_yaxis, optional 
 	fig : matplotlib.figure, optional
@@ -209,12 +209,15 @@ def plot_1D_depth_profile(field: VectorNumpy,
 	""" 
 
 	return_ax = False
+
 	if ax is None:
 		fig, ax = plt.subplots()
 		return_ax = True
 
 	ax.plot(field, depth, **kwargs)
-	ax.fill_betweenx(depth, field-uncertField, field+uncertField, alpha=0.8)
+
+	if uncertField is not None:
+		ax.fill_betweenx(depth, field-uncertField, field+uncertField, alpha=0.8)
 
 	if invert_yaxis:
 		ax.invert_yaxis()

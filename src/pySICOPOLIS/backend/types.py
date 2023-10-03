@@ -2,11 +2,12 @@
 
 from typing import Optional, Sequence, Union, Tuple, TypeAlias, TypeVar, TypedDict
 import numpy as np
+import xarray as xr
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.pyplot import Axes
 
-# DUMMY for NotRequired since it is only available in Python 3.11 and onwards
+# Dummy for NotRequired since it is only available in Python 3.11 and onwards
 # from typing import NotRequired # use once you have Python 3.11 env
 NotRequired: TypeAlias = Optional # Optional is the closest in meaning to NotRequired for now
 
@@ -26,3 +27,7 @@ OptionalSequence: TypeAlias = Union[T, Sequence[T]]
 Figure: TypeAlias = mpl.figure.Figure
 Axes: TypeAlias = plt.Axes
 Colormap: TypeAlias = Union[str, mpl.colors.Colormap]
+
+# Typing hints for xarray datasets and dataarraysxarray.core.dataset.Dataset
+Dataset: TypeAlias = xr.core.dataset.Dataset
+DataArray: TypeAlias = xr.core.dataarray.DataArray

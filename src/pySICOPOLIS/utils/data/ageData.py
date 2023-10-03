@@ -1,0 +1,293 @@
+import netCDF4 as nc
+import numpy as np
+import xarray as xr
+
+from pySICOPOLIS.backend.types import Dataset, DataArray
+from pySICOPOLIS.backend.types import Optional, OptionalList
+from pySICOPOLIS.backend.types import VectorNumpy, MatrixNumpy, TensorNumpy
+
+from pySICOPOLIS.utils.data.dataCleaner import *
+
+__all__ = ['correctAgeDataset', 'interpToModelGrid']
+
+def correctAgeDataset(ds_age: Dataset,
+                      path: Optional[str] = None,
+                      filename: Optional[str] = None,
+                      kData: int = 26,
+                      unCorrupt: bool = False) -> Dataset:
+    
+    """
+    Create corrected age dataset, with z-coord from bottom to top.
+    The coords for the dataArrays are generally x and y instead of indices.
+    Parameters
+    ----------
+    ds_age : Dataset
+        Raw age-layer Dataset by Macgregor et. al
+    path : str or None
+        Absolute path to where to export corrected Dataset as nc file
+    filename : str or None
+        File name of nc file
+    kData : int
+        Number of vertical levels in data, current version has 25 + 1 for 0 age
+    unCorrupt: bool
+        Bool to decide if uncorrupt age_uncert field, default False
+    """
+	
+    x = ds_age['x'].transpose("number of grid points in y-direction", 
+                              "number of grid points in x-direction").data
+    y = ds_age['y'].transpose("number of grid points in y-direction", 
+                              "number of grid points in x-direction").data
+    thick = ds_age['thick'].transpose("number of grid points in y-direction", 
+                                      "number of grid points in x-direction").data
+
+    jData = np.arange(x.shape[0])
+    iData = np.arange(x.shape[1])
+    kData = np.arange(26)
+
+    # delta_z for each column, thickness dependent
+    delta_z = thick / (len(kData)-1)
+    # z co-ord within each column, thickness dependent
+    z_minus_zb = np.array([delta_z*i for i in range(len(kData))])
+
+    # DataArray for x coordinates
+    da_x = xr.DataArray(
+        data = x,
+        dims = ["jData", "iData"],
+        coords = dict(
+            jData = jData,
+            iData = iData
+        ),
+        attrs = dict(description="x in kms"),
+    )
+
+    # DataArray for y coordinates
+    da_y = xr.DataArray(
+        data = y,
+        dims = ["jData", "iData"],
+        coords = dict(
+            jData = np.arange(y.shape[0]),
+            iData = np.arange(y.shape[1])
+        ),
+        attrs = dict(description="y in kms"),
+    )
+
+    # DataArray for thickness
+    da_thick = xr.DataArray(
+        data = thick,
+        coords = dict(
+            yData = da_y.data[:,0],
+            xData = da_x.data[0]
+        ),
+        dims = ["yData", "xData"],
+        attrs = dict(description="Ice thickness in metres"),
+    )
+
+    # DataArray for z co-ord within each column, thickness dependent
+    da_z_minus_zb = xr.DataArray(
+        data = z_minus_zb,
+        coords = dict(
+            kData = kData,
+            yData = da_y.data[:,0],
+            xData = da_x.data[0]
+        ),
+        dims = ["kData", "yData", "xData"],
+        attrs = dict(description="z-zb in metres"),
+    )
+
+    # Load age DataArray and reverse, z co-ord now bottom to top
+    age = ds_age['age_norm'].transpose("number of vertical layers",
+                                    "number of grid points in y-direction", 
+                                    "number of grid points in x-direction")[::-1]
+    # Concatenate 0 age layer at the top
+    age = np.concatenate((age,np.zeros((1,jData.shape[0],iData.shape[0]), dtype = np.float64)), axis = 0)
+
+    # DataArray for age
+    da_age = xr.DataArray(
+        data = age,
+        coords=dict(
+            z_minus_zbData = (["kData", "yData", "xData"], da_z_minus_zb.data),
+            yData = da_y.data[:,0],
+            xData = da_x.data[0]
+        ),
+        dims = ["kData", "yData", "xData"],
+        attrs=dict(description="Age in years, from bottom to top"),
+    )
+
+    # If uncorrupt, add age_uncert data as well
+    if unCorrupt:
+
+        # Load age uncertainty DataArray and reverse, z co-ord now bottom to top
+        age_uncert = ds_age['age_norm_uncert'].transpose("number of vertical layers",
+                                                    "number of grid points in y-direction", 
+                                                    "number of grid points in x-direction")[::-1]
+
+        age_uncert_clean = corruptionToNum(age_uncert, replace_with = np.nan)
+
+        # Concatenate 0 age_uncert layer at the top, but can't divide by 0
+        # So assign uncert 1.0 years which is quite small
+        age_uncert_clean = np.concatenate((age_uncert_clean,
+                                        np.ones((1,jData.shape[0],iData.shape[0]), 
+                                                    dtype = np.float64)), 
+                                                    axis = 0)
+
+        # DataArray for age uncertainty
+        da_age_uncert = xr.DataArray(
+            data = age_uncert_clean,
+            coords=dict(
+                z_minus_zbData = (["kData", "yData", "xData"], da_z_minus_zb.data),
+                yData = da_y.data[:,0],
+                xData = da_x.data[0]
+            ),
+            dims = ["kData", "yData", "xData"],
+            attrs=dict(description="Age uncertainty in years, from bottom to top"),
+        )
+
+    
+    # Collect all DataArrays in a Dataset
+    ds_age_correct = xr.Dataset()
+    ds_age_correct = ds_age_correct.assign(xMesh          = da_x,
+                                           yMesh          = da_y,
+                                           thick          = da_thick,
+                                           z_minus_zbData = da_z_minus_zb,
+                                           age            = da_age)
+
+    # If uncorrupt, add age_uncert data as well
+    if unCorrupt:
+        ds_age_correct = ds_age_correct.assign(age_uncert = da_age_uncert)
+
+    # Write Dataset to NetCDF file
+    if path and filename:
+        ds_age_correct.to_netcdf(path+filename, mode='w')
+
+    return ds_age_correct
+
+def interpToModelGrid(ds_age_correct: Dataset,
+                      xModel: VectorNumpy,
+                      yModel: VectorNumpy,
+                      zeta_cModel: VectorNumpy,
+                      hor_interp_method: str = 'nearest',
+                      ver_interp_method: str = 'linear',
+                      path: Optional[str] = None,
+                      filename: Optional[str] = None,
+                      **kwargs) -> Dataset:
+
+    """
+    Create corrected age dataset, with z-coord from bottom to top.
+    The coords for the dataArrays are generally x and y instead of indices.
+    Parameters
+    ----------
+    ds_age_correct : Dataset
+        Corrected age layer dataset
+    xModel : numpy 1D array
+        x co-ordinates for model
+    yModel : numpy 1D array
+        y co-ordinates for model
+    zeta_cModel : numpy 1D array
+        Normalized z-co-ordinates for model
+    hor_interp_method : str
+        Method for horizontal interpolation, default 'nearest'
+    ver_interp_method : str
+        Method for vertical interpolation, default 'nearest'
+    path : str or None
+        Absolute path to where to export model Dataset as nc file
+    filename : str or None
+        File name of nc file
+    kwargs
+        Passed to scipy.ndimage.gaussian_filter
+    """
+
+    # Interpolate horizontally on to model grid
+    ds_model = ds_age_correct.interp(xData=xModel, 
+                                     yData=yModel,
+                                     method = hor_interp_method)
+    # Rename x and y dimensions
+    ds_model = ds_model.rename({'xData':'xModel', 
+                                'yData':'yModel', 
+                                'z_minus_zbData': 'z_minus_zbModel'})
+    
+    # DataArray for x-coordinate
+    da_x = xr.DataArray(
+        data = np.tile(xModel, (yModel.shape[0],1)),
+        dims = ["jModel", "iModel"],
+        coords = dict(
+            jModel = np.arange(yModel.shape[0]),
+            iModel = np.arange(xModel.shape[0])
+        ),
+        attrs = dict(description="x in kms"),
+    )
+
+    # DataArray for y-coordinate
+    da_y = xr.DataArray(
+        data = np.tile(yModel, (xModel.shape[0],1)).T,
+        dims = ["jModel", "iModel"],
+        coords = dict(
+            jModel = np.arange(yModel.shape[0]),
+            iModel = np.arange(xModel.shape[0])
+        ),
+        attrs = dict(description="y in kms"),
+    )
+
+    ds_model = ds_model.assign(xMesh = da_x, yMesh = da_y)
+    ds_model = ds_model.drop_dims(['jData','iData'])
+
+    # Get scaling of kData
+    temp = ds_age_correct['kData'].shape[0]-1
+
+    # Interpolate to zeta_c grid
+
+    ## First interpolate the in-between NaNs
+    ds_model = ds_model.interpolate_na(dim="kData", method = ver_interp_method)
+    ## Interpolate on to zeta_c grid
+    ds_model = ds_model.interp(kData=zeta_cModel*temp, method = ver_interp_method)
+    ## Rename z-dimension
+    ds_model = ds_model.rename({'kData':'zeta_cModel'})
+    ## Scale back to between 0 and 1
+    ds_model['zeta_cModel'] = ds_model['zeta_cModel'] / temp
+
+    # Smooth age data in 2D fashion
+    age_smooth2D = np.zeros(ds_model['age'].data.shape)
+
+    for k in range(age_smooth2D.shape[0]):
+        age_smooth2D[k] = gaussian_filter_withNaNs(ds_model['age'].data[k],
+                                                   **kwargs)
+    
+    # DataArray for smoothed (2D fashion) age layer data
+    da_age_smooth2D = xr.DataArray(
+        data = age_smooth2D,
+        dims = ["zeta_cModel", "yModel", "xModel"],
+        coords = dict(
+            zeta_cModel = ds_model["zeta_cModel"].data,
+            yModel      = ds_model["yModel"].data,
+            xModel      = ds_model["xModel"].data
+        ),
+        attrs = dict(description="Age smoothed 2D-wise",
+                     metadata=str(kwargs)),
+    )
+
+    # Smooth age data, whole 3D field at once, tends to be less realistic
+    age_smooth3D = gaussian_filter_withNaNs(ds_model['age'].data,
+                                            **kwargs)
+
+    # DataArray for smoothed (3D fashion) age layer data
+    da_age_smooth3D = xr.DataArray(
+        data = age_smooth3D,
+        dims = ["zeta_cModel", "yModel", "xModel"],
+        coords = dict(
+            zeta_cModel = ds_model["zeta_cModel"].data,
+            yModel      = ds_model["yModel"].data,
+            xModel      = ds_model["xModel"].data
+        ),
+        attrs = dict(description="Age smoothed 3D field at once",
+                     metadata=str(kwargs)),
+    )
+
+    # Assign smoothed age fields to ds_model
+    ds_model = ds_model.assign(age_smooth2D = da_age_smooth2D, 
+                               age_smooth3D = da_age_smooth3D)
+
+    # Write Dataset to NetCDF file
+    if path and filename:
+        ds_model.to_netcdf(path+filename, mode='w')
+
+    return ds_model
+
