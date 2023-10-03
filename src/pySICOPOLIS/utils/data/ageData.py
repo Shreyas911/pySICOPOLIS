@@ -167,6 +167,7 @@ def interpToModelGrid(ds_age_correct: Dataset,
                       zeta_cModel: VectorNumpy,
                       hor_interp_method: str = 'nearest',
                       ver_interp_method: str = 'linear',
+                      replace_nans_with: float = -999.0,
                       path: Optional[str] = None,
                       filename: Optional[str] = None,
                       **kwargs) -> Dataset:
@@ -188,6 +189,8 @@ def interpToModelGrid(ds_age_correct: Dataset,
         Method for horizontal interpolation, default 'nearest'
     ver_interp_method : str
         Method for vertical interpolation, default 'nearest'
+    replace_nans_with : float
+        Replace NaNs with this float
     path : str or None
         Absolute path to where to export model Dataset as nc file
     filename : str or None
@@ -286,8 +289,8 @@ def interpToModelGrid(ds_age_correct: Dataset,
                                age_smooth3D = da_age_smooth3D)
 
     # Replace all NaNs with -999.0
-    ds_model = ds_model.fillna(-999.0)
-    
+    ds_model = ds_model.fillna(replace_nans_with)
+
     # Write Dataset to NetCDF file
     if path and filename:
         ds_model.to_netcdf(path+filename, mode='w')
