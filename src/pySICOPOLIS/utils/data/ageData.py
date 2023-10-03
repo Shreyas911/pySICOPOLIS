@@ -285,6 +285,9 @@ def interpToModelGrid(ds_age_correct: Dataset,
     ds_model = ds_model.assign(age_smooth2D = da_age_smooth2D, 
                                age_smooth3D = da_age_smooth3D)
 
+    # Replace all NaNs with -999.0
+    ds_model = ds_model.fillna(-999.0)
+    
     # Write Dataset to NetCDF file
     if path and filename:
         ds_model.to_netcdf(path+filename, mode='w')
