@@ -13,7 +13,7 @@ __all__ = ['correctAgeDataset', 'interpToModelGrid']
 def correctAgeDataset(ds_age: Dataset,
                       path: Optional[str] = None,
                       filename: Optional[str] = None,
-                      kData: int = 26,
+                      zetaLevels: int = 26,
                       unCorrupt: bool = False) -> Dataset:
     
     """
@@ -27,7 +27,7 @@ def correctAgeDataset(ds_age: Dataset,
         Absolute path to where to export corrected Dataset as nc file
     filename : str or None
         File name of nc file
-    kData : int
+    zetaData : int
         Number of vertical levels in data, current version has 25 + 1 for 0 age
     unCorrupt: bool
         Bool to decide if uncorrupt age_uncert field, default False
@@ -42,12 +42,12 @@ def correctAgeDataset(ds_age: Dataset,
 
     jData = np.arange(x.shape[0])
     iData = np.arange(x.shape[1])
-    kData = np.arange(26)
+    zetaData = np.arange(zetaLevels)
 
     # delta_z for each column, thickness dependent
-    delta_z = thick / (len(kData)-1)
+    delta_z = thick / (zetaLevels-1)
     # z co-ord within each column, thickness dependent
-    z_minus_zb = np.array([delta_z*i for i in range(len(kData))])
+    z_minus_zb = np.array([delta_z*i for i in range(zetaLevels)])
 
     # DataArray for x coordinates
     da_x = xr.DataArray(
@@ -86,11 +86,11 @@ def correctAgeDataset(ds_age: Dataset,
     da_z_minus_zb = xr.DataArray(
         data = z_minus_zb,
         coords = dict(
-            kData = kData,
+            zetaData = zetaData,
             yData = da_y.data[:,0],
             xData = da_x.data[0]
         ),
-        dims = ["kData", "yData", "xData"],
+        dims = ["zetaData", "yData", "xData"],
         attrs = dict(description="z-zb in metres"),
     )
 
@@ -105,11 +105,11 @@ def correctAgeDataset(ds_age: Dataset,
     da_age = xr.DataArray(
         data = age,
         coords=dict(
-            z_minus_zbData = (["kData", "yData", "xData"], da_z_minus_zb.data),
+            z_minus_zbData = (["zetaData", "yData", "xData"], da_z_minus_zb.data),
             yData = da_y.data[:,0],
             xData = da_x.data[0]
         ),
-        dims = ["kData", "yData", "xData"],
+        dims = ["zetaData", "yData", "xData"],
         attrs=dict(description="Age in years, from bottom to top"),
     )
 
@@ -134,11 +134,11 @@ def correctAgeDataset(ds_age: Dataset,
         da_age_uncert = xr.DataArray(
             data = age_uncert_clean,
             coords=dict(
-                z_minus_zbData = (["kData", "yData", "xData"], da_z_minus_zb.data),
+                z_minus_zbData = (["zetaData", "yData", "xData"], da_z_minus_zb.data),
                 yData = da_y.data[:,0],
                 xData = da_x.data[0]
             ),
-            dims = ["kData", "yData", "xData"],
+            dims = ["zetaData", "yData", "xData"],
             attrs=dict(description="Age uncertainty in years, from bottom to top"),
         )
 
@@ -164,7 +164,7 @@ def correctAgeDataset(ds_age: Dataset,
 def interpToModelGrid(ds_age_correct: Dataset,
                       xModel: VectorNumpy,
                       yModel: VectorNumpy,
-                      zeta_cModel: VectorNumpy,
+                      sigma_levelModel: VectorNumpy,
                       hor_interp_method: str = 'nearest',
                       ver_interp_method: str = 'linear',
                       replace_nans_with: float = -999.0,
@@ -183,7 +183,7 @@ def interpToModelGrid(ds_age_correct: Dataset,
         x co-ordinates for model
     yModel : numpy 1D array
         y co-ordinates for model
-    zeta_cModel : numpy 1D array
+    sigma_levelModel : numpy 1D array
         Normalized z-co-ordinates for model
     hor_interp_method : str
         Method for horizontal interpolation, default 'nearest'
@@ -233,19 +233,19 @@ def interpToModelGrid(ds_age_correct: Dataset,
     ds_model = ds_model.assign(xMesh = da_x, yMesh = da_y)
     ds_model = ds_model.drop_dims(['jData','iData'])
 
-    # Get scaling of kData
-    temp = ds_age_correct['kData'].shape[0]-1
+    # Get scaling of zetaData
+    temp = ds_age_correct['zetaData'].shape[0]-1
 
     # Interpolate to zeta_c grid
 
     ## First interpolate the in-between NaNs
-    ds_model = ds_model.interpolate_na(dim="kData", method = ver_interp_method)
+    ds_model = ds_model.interpolate_na(dim="zetaData", method = ver_interp_method)
     ## Interpolate on to zeta_c grid
-    ds_model = ds_model.interp(kData=zeta_cModel*temp, method = ver_interp_method)
+    ds_model = ds_model.interp(zetaData=sigma_levelModel*temp, method = ver_interp_method)
     ## Rename z-dimension
-    ds_model = ds_model.rename({'kData':'zeta_cModel'})
+    ds_model = ds_model.rename({'zetaData':'sigma_levelModel'})
     ## Scale back to between 0 and 1
-    ds_model['zeta_cModel'] = ds_model['zeta_cModel'] / temp
+    ds_model['sigma_levelModel'] = ds_model['sigma_levelModel'] / temp
 
     # Smooth age data in 2D fashion
     age_smooth2D = np.zeros(ds_model['age'].data.shape)
@@ -257,9 +257,9 @@ def interpToModelGrid(ds_age_correct: Dataset,
     # DataArray for smoothed (2D fashion) age layer data
     da_age_smooth2D = xr.DataArray(
         data = age_smooth2D,
-        dims = ["zeta_cModel", "yModel", "xModel"],
+        dims = ["sigma_levelModel", "yModel", "xModel"],
         coords = dict(
-            zeta_cModel = ds_model["zeta_cModel"].data,
+            sigma_levelModel = ds_model["sigma_levelModel"].data,
             yModel      = ds_model["yModel"].data,
             xModel      = ds_model["xModel"].data
         ),
@@ -274,9 +274,9 @@ def interpToModelGrid(ds_age_correct: Dataset,
     # DataArray for smoothed (3D fashion) age layer data
     da_age_smooth3D = xr.DataArray(
         data = age_smooth3D,
-        dims = ["zeta_cModel", "yModel", "xModel"],
+        dims = ["sigma_levelModel", "yModel", "xModel"],
         coords = dict(
-            zeta_cModel = ds_model["zeta_cModel"].data,
+            sigma_levelModel = ds_model["sigma_levelModel"].data,
             yModel      = ds_model["yModel"].data,
             xModel      = ds_model["xModel"].data
         ),

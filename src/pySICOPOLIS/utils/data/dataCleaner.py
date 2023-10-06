@@ -9,7 +9,7 @@ from pySICOPOLIS.backend.types import Dataset, DataArray
 from pySICOPOLIS.backend.types import Optional, OptionalList
 from pySICOPOLIS.backend.types import VectorNumpy, MatrixNumpy, TensorNumpy
 
-__all__ = ['corruptionToNum', 'exp_zeta_c',
+__all__ = ['corruptionToNum', 'exp_sigma_level',
            'gaussian_filter_withNaNs']
 def corruptionToNum(da_field : DataArray,
                     replace_with : float = np.nan) -> TensorNumpy:
@@ -45,23 +45,20 @@ def corruptionToNum(da_field : DataArray,
                         
     return age_uncert_clean
 
-def exp_zeta_c(uniform_zeta_c: VectorNumpy,
-               exponent : float) -> VectorNumpy:
+def exp_sigma_level(zeta: VectorNumpy,
+                    exponent : float) -> VectorNumpy:
     """
     Convert uniform z-grid to exponential z-grid
     Returns exponential z-grid
     Parameters
 	----------
-    uniform_zeta_c : 1D numpy array
+    zeta : 1D numpy array
         Uniform grid of zeta_c between 0 and 1
     exponent : float
         Hyperparameter for exponential grid
     """
-
-    zeta_c = (np.exp(exponent*uniform_zeta_c) - 1) \
-           / (np.exp(exponent) - 1)
     
-    return zeta_c
+    return (np.exp(exponent*zeta) - 1) / (np.exp(exponent) - 1)
 
 def gaussian_filter_withNaNs(field : TensorNumpy,
                              **kwargs) -> TensorNumpy:

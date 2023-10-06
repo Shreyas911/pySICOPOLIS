@@ -1,6 +1,6 @@
 """ Custom type hinting for XAIRT """
 
-from typing import Optional, Sequence, Union, Tuple, TypeAlias, TypeVar, TypedDict
+from typing import Optional, Sequence, Union, Tuple, TypeAlias, TypeVar, TypedDict, Dict
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
