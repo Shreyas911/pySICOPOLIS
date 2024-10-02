@@ -297,3 +297,75 @@ def interpToModelGrid(ds_age_correct: Dataset,
 
     return ds_model
 
+def interpToModelGrid2D(ds: Dataset,
+                        xModel: VectorNumpy,
+                        yModel: VectorNumpy,
+                        hor_interp_method: str = 'nearest',
+                        replace_nans_with: float = -999.0,
+                        path: Optional[str] = None,
+                        filename: Optional[str] = None) -> Dataset:
+
+    """
+    Create corrected age dataset, with z-coord from bottom to top.
+    The coords for the dataArrays are generally x and y instead of indices.
+    Parameters
+    ----------
+    ds : Dataset
+        Corrected 2D dataset, for example BedMachine
+    xModel : numpy 1D array
+        x co-ordinates for model
+    yModel : numpy 1D array
+        y co-ordinates for model
+    sigma_levelModel : numpy 1D array
+        Normalized z-co-ordinates for model
+    hor_interp_method : str
+        Method for horizontal interpolation, default 'nearest'
+    replace_nans_with : float
+        Replace NaNs with this float
+    path : str or None
+        Absolute path to where to export model Dataset as nc file
+    filename : str or None
+        File name of nc file
+    """
+
+    # Interpolate horizontally on to model grid
+    ds_model = ds.interp(x=xModel, 
+                         y=yModel,
+                         method = hor_interp_method)
+    # Rename x and y dimensions
+    ds_model = ds_model.rename({'x':'xModel', 
+                                'y':'yModel'})
+    
+    # DataArray for x-coordinate
+    da_x = xr.DataArray(
+        data = np.tile(xModel, (yModel.shape[0],1)),
+        dims = ["jModel", "iModel"],
+        coords = dict(
+            jModel = np.arange(yModel.shape[0]),
+            iModel = np.arange(xModel.shape[0])
+        ),
+        attrs = dict(description="x in kms"),
+    )
+
+    # DataArray for y-coordinate
+    da_y = xr.DataArray(
+        data = np.tile(yModel, (xModel.shape[0],1)).T,
+        dims = ["jModel", "iModel"],
+        coords = dict(
+            jModel = np.arange(yModel.shape[0]),
+            iModel = np.arange(xModel.shape[0])
+        ),
+        attrs = dict(description="y in kms"),
+    )
+
+    ds_model = ds_model.assign(xMesh = da_x, yMesh = da_y)
+
+    # Replace all NaNs with -999.0
+    ds_model = ds_model.fillna(replace_nans_with)
+
+    # Write Dataset to NetCDF file
+    if path and filename:
+        ds_model.to_netcdf(path+filename, mode='w')
+
+    return ds_model
+
