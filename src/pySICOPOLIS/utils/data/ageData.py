@@ -32,12 +32,14 @@ def correctAgeDataset(ds_age: Dataset,
     unCorrupt: bool
         Bool to decide if uncorrupt age_uncert field, default False
     """
-	
+
+    ds_age = ds_age.rename({"age_norm": "age_c", "age_norm_uncert": "age_c_uncert", "thick": "H"})
+
     x = ds_age['x'].transpose("number of grid points in y-direction", 
                               "number of grid points in x-direction").data
     y = ds_age['y'].transpose("number of grid points in y-direction", 
                               "number of grid points in x-direction").data
-    thick = ds_age['thick'].transpose("number of grid points in y-direction", 
+    H = ds_age['H'].transpose("number of grid points in y-direction", 
                                       "number of grid points in x-direction").data
 
     jData = np.arange(x.shape[0])
@@ -45,7 +47,7 @@ def correctAgeDataset(ds_age: Dataset,
     zetaData = np.arange(zetaLevels)
 
     # delta_z for each column, thickness dependent
-    delta_z = thick / (zetaLevels-1)
+    delta_z = H / (zetaLevels-1)
     # z co-ord within each column, thickness dependent
     z_minus_zb = np.array([delta_z*i for i in range(zetaLevels)])
 
@@ -72,8 +74,8 @@ def correctAgeDataset(ds_age: Dataset,
     )
 
     # DataArray for thickness
-    da_thick = xr.DataArray(
-        data = thick,
+    da_H = xr.DataArray(
+        data = H,
         coords = dict(
             yData = da_y.data[:,0],
             xData = da_x.data[0]
@@ -95,7 +97,7 @@ def correctAgeDataset(ds_age: Dataset,
     )
 
     # Load age DataArray and reverse, z co-ord now bottom to top
-    age = ds_age['age_norm'].transpose("number of vertical layers",
+    age = ds_age['age_c'].transpose("number of vertical layers",
                                     "number of grid points in y-direction", 
                                     "number of grid points in x-direction")[::-1]
     # Concatenate 0 age layer at the top
@@ -113,11 +115,26 @@ def correctAgeDataset(ds_age: Dataset,
         attrs=dict(description="Age in years, from bottom to top"),
     )
 
+    age_uncert_fake = 0.1*age
+    age_uncert_fake[age_uncert_fake <= 1.0] = 1.0
+
+    # DataArray for fake age uncertainty since the real one is corrupted
+    da_age_uncert_fake = xr.DataArray(
+        data = age_uncert_fake,
+        coords=dict(
+            z_minus_zbData = (["zetaData", "yData", "xData"], da_z_minus_zb.data),
+            yData = da_y.data[:,0],
+            xData = da_x.data[0]
+        ),
+        dims = ["zetaData", "yData", "xData"],
+        attrs=dict(description="Fake age uncertainty in years, from bottom to top"),
+    )
+
     # If uncorrupt, add age_uncert data as well
     if unCorrupt:
 
         # Load age uncertainty DataArray and reverse, z co-ord now bottom to top
-        age_uncert = ds_age['age_norm_uncert'].transpose("number of vertical layers",
+        age_uncert = ds_age['age_c_uncert'].transpose("number of vertical layers",
                                                     "number of grid points in y-direction", 
                                                     "number of grid points in x-direction")[::-1]
 
@@ -147,13 +164,14 @@ def correctAgeDataset(ds_age: Dataset,
     ds_age_correct = xr.Dataset()
     ds_age_correct = ds_age_correct.assign(xMesh          = da_x,
                                            yMesh          = da_y,
-                                           thick          = da_thick,
+                                           H              = da_H,
                                            z_minus_zbData = da_z_minus_zb,
-                                           age            = da_age)
+                                           age_c            = da_age,
+                                           age_c_uncert     = da_age_uncert_fake)
 
     # If uncorrupt, add age_uncert data as well
     if unCorrupt:
-        ds_age_correct = ds_age_correct.assign(age_uncert = da_age_uncert)
+        ds_age_correct = ds_age_correct.assign(age_uncert_real = da_age_uncert)
 
     # Write Dataset to NetCDF file
     if path and filename:
@@ -248,10 +266,10 @@ def interpToModelGrid(ds_age_correct: Dataset,
     ds_model['sigma_levelModel'] = ds_model['sigma_levelModel'] / temp
 
     # Smooth age data in 2D fashion
-    age_smooth2D = np.zeros(ds_model['age'].data.shape)
+    age_smooth2D = np.zeros(ds_model['age_c'].data.shape)
 
     for k in range(age_smooth2D.shape[0]):
-        age_smooth2D[k] = gaussian_filter_withNaNs(ds_model['age'].data[k],
+        age_smooth2D[k] = gaussian_filter_withNaNs(ds_model['age_c'].data[k],
                                                    **kwargs)
     
     # DataArray for smoothed (2D fashion) age layer data
@@ -268,7 +286,7 @@ def interpToModelGrid(ds_age_correct: Dataset,
     )
 
     # Smooth age data, whole 3D field at once, tends to be less realistic
-    age_smooth3D = gaussian_filter_withNaNs(ds_model['age'].data,
+    age_smooth3D = gaussian_filter_withNaNs(ds_model['age_c'].data,
                                             **kwargs)
 
     # DataArray for smoothed (3D fashion) age layer data
@@ -284,9 +302,42 @@ def interpToModelGrid(ds_age_correct: Dataset,
                      metadata=str(kwargs)),
     )
 
+    age_uncert_smooth2D_fake = 0.1*age_smooth2D
+    age_uncert_smooth2D_fake[age_uncert_smooth2D_fake <= 1.0] = 1.0
+    age_uncert_smooth3D_fake = 0.1*age_smooth3D
+    age_uncert_smooth3D_fake[age_uncert_smooth3D_fake <= 1.0] = 1.0
+
+    # DataArray for smoothed (2D fashion) age uncertainty data
+    da_age_uncert_smooth2D = xr.DataArray(
+        data = age_uncert_smooth2D_fake,
+        dims = ["sigma_levelModel", "yModel", "xModel"],
+        coords = dict(
+            sigma_levelModel = ds_model["sigma_levelModel"].data,
+            yModel      = ds_model["yModel"].data,
+            xModel      = ds_model["xModel"].data
+        ),
+        attrs = dict(description="Fake age uncertainty smoothed 2D-wise",
+                     metadata=str(kwargs)),
+    )
+
+    # DataArray for smoothed (2D fashion) age uncertainty data
+    da_age_uncert_smooth3D = xr.DataArray(
+        data = age_uncert_smooth3D_fake,
+        dims = ["sigma_levelModel", "yModel", "xModel"],
+        coords = dict(
+            sigma_levelModel = ds_model["sigma_levelModel"].data,
+            yModel      = ds_model["yModel"].data,
+            xModel      = ds_model["xModel"].data
+        ),
+        attrs = dict(description="Fake age uncertainty smoothed 3D-wise",
+                     metadata=str(kwargs)),
+    )
+
     # Assign smoothed age fields to ds_model
-    ds_model = ds_model.assign(age_smooth2D = da_age_smooth2D, 
-                               age_smooth3D = da_age_smooth3D)
+    ds_model = ds_model.assign(age_c_smooth2D = da_age_smooth2D, 
+                               age_c_smooth3D = da_age_smooth3D,
+                               age_c_uncert_smooth2D = da_age_uncert_smooth2D,
+                               age_c_uncert_smooth3D = da_age_uncert_smooth3D,)
 
     # Replace all NaNs with -999.0
     ds_model = ds_model.fillna(replace_nans_with)
@@ -327,6 +378,8 @@ def interpToModelGrid2D(ds: Dataset,
     filename : str or None
         File name of nc file
     """
+
+    ds = ds.rename({"thickness": "H", "errbed": "H_uncert"})
 
     # Interpolate horizontally on to model grid
     ds_model = ds.interp(x=xModel, 
