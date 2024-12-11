@@ -37,6 +37,7 @@ def corruptionToNum(field : DataArray,
         try:
             field_clean[layer] = field[layer].data
         except:
+            print(f"Uncorrupt z={layer}.")
             for j in range(field_shape[1]):
                 try:
                     field_clean[layer, j] = field[layer, j].data
