@@ -12,7 +12,8 @@ from pySICOPOLIS.backend.types import VectorNumpy, MatrixNumpy, TensorNumpy
 __all__ = ['corruptionToNum', 'exp_sigma_level',
            'gaussian_filter_withNaNs']
 
-def corruptionToNum(da_field : DataArray,
+def corruptionToNum(field : DataArray,
+                    field_shape : VectorNumpy,
                     replace_with : float = np.nan) -> TensorNumpy:
       
     """
@@ -21,30 +22,32 @@ def corruptionToNum(da_field : DataArray,
     Returns uncorrupted numpy tensor
     Parameters
 	----------
-	da_field : DataArray
+	field : DataArray
         Corrupted DataArray
+    field_shape: 1D numpy array
+        Shape of field (which is sometimes not readable using field.shape for a corrupt field)
     replace_with : float
         Replace corrupted stuff with this float, default np.nan
     """
 
-    da_field_clean = np.zeros(age_uncert.shape)
+    field_clean = np.zeros(field.shape)
 
-    for layer in range(len(age_uncert)):
+    for layer in range(field_shape[0]):
 
         try:
-            age_uncert_clean[layer] = age_uncert[layer]
+            field_clean[layer] = field[layer].data
         except:
-            for j in range(age_uncert.shape[1]):
+            for j in range(field_shape[1]):
                 try:
-                    age_uncert_clean[layer, j] = age_uncert[layer, j]
+                    field_clean[layer, j] = field[layer, j].data
                 except:
-                    for i in range(age_uncert.shape[2]):
+                    for i in range(field_shape[2]):
                         try:
-                            age_uncert_clean[layer, j, i] = age_uncert[layer, j, i]
+                            field_clean[layer, j, i] = field[layer, j, i].data
                         except:
-                            age_uncert_clean[layer, j, i] = np.nan
+                            field_clean[layer, j, i] = np.nan
                         
-    return age_uncert_clean
+    return field_clean
 
 def exp_sigma_level(zeta: VectorNumpy,
                     exponent : float) -> VectorNumpy:

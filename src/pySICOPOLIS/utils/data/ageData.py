@@ -100,6 +100,7 @@ def correctAgeDataset(ds_age: Dataset,
     age = ds_age['age_c'].transpose("number of vertical layers",
                                     "number of grid points in y-direction", 
                                     "number of grid points in x-direction")[::-1]
+    old_age_shape = age.data.shape
     # Concatenate 0 age layer at the top
     age = np.concatenate((age,np.zeros((1,jData.shape[0],iData.shape[0]), dtype = np.float64)), axis = 0)
 
@@ -138,7 +139,7 @@ def correctAgeDataset(ds_age: Dataset,
                                                     "number of grid points in y-direction", 
                                                     "number of grid points in x-direction")[::-1]
 
-        age_uncert_clean = corruptionToNum(age_uncert, replace_with = np.nan)
+        age_uncert_clean = corruptionToNum(age_uncert, old_age_shape, replace_with = np.nan)
 
         # Concatenate 0 age_uncert layer at the top, but can't divide by 0
         # So assign uncert 1.0 years which is quite small
