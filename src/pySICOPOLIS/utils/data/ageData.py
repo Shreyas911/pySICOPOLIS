@@ -140,13 +140,14 @@ def correctAgeDataset(ds_age: Dataset,
                                                     "number of grid points in x-direction")[::-1]
 
         age_uncert_clean = corruptionToNum(age_uncert, old_age_shape, replace_with = np.nan)
+        age_uncert_clean[age_uncert_clean == 0.0] = np.nan
 
         # Concatenate 0 age_uncert layer at the top, but can't divide by 0
         # So assign uncert 1.0 years which is quite small
         age_uncert_clean = np.concatenate((age_uncert_clean,
-                                        np.ones((1,jData.shape[0],iData.shape[0]), 
-                                                    dtype = np.float64)), 
-                                                    axis = 0)
+                                           np.ones((1,jData.shape[0],iData.shape[0]), 
+                                                   dtype = np.float64)), 
+                                           axis = 0)
 
         # DataArray for age uncertainty
         da_age_uncert = xr.DataArray(
@@ -172,7 +173,7 @@ def correctAgeDataset(ds_age: Dataset,
 
     # If uncorrupt, add age_uncert data as well
     if unCorrupt:
-        ds_age_correct = ds_age_correct.assign(age_uncert_real = da_age_uncert)
+        ds_age_correct = ds_age_correct.assign(age_c_uncert_real = da_age_uncert)
 
     # Write Dataset to NetCDF file
     if path and filename:
