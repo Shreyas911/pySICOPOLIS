@@ -4,7 +4,10 @@ import subprocess
 
 __all__ = ["create_ad_input_nc", "run_exec", 
            "copy_dir", "move_dir", "remove_dir", 
-           "eval_cost"]
+           "eval_cost", "eval_gradient", "subset_of_ds",
+           "ds_compatibility_prep", "L2_inner_product",
+           "grad_descent_step", "line_search",
+           "tlm_hessaction", "exch_type_tlm_adj_hessaction", "adj_hessaction"]
 
 def create_ad_input_nc(dict_fields_vals, 
                        dict_fields_num_dims,
@@ -19,7 +22,7 @@ def create_ad_input_nc(dict_fields_vals,
 
     ds = xr.Dataset()
 
-    if dict_fields_vals.keys() != dict_fields_num_dims.keys():
+    if dict_fields_vals.keys() != dict_fields_num_dims.keys() != dict_dimensions.keys() != dict_attrs_type.keys():
         raise ValueError("Some fields are not defined as keys in either the values or the num_dims dictionary.")
 
     for field in dict_fields_vals:
@@ -288,9 +291,9 @@ def ds_compatibility_prep(list_ds, list_types,
     for type_var in list_types:
         if type_var == "nodiff":
             list_suffixes.append("")
-        elif type_var == "adj":
+        elif type_var == "adj" or type_var == "adjhessaction":
             list_suffixes.append("b")
-        elif type_var == "tlm":
+        elif type_var == "tlm" or type_var == "tlmhessaction":
             list_suffixes.append("d")
         else:
             return ValueError(f"ds_compatibility_prep: {type_var} is not a valid type for this function for now.")
@@ -420,4 +423,81 @@ def line_search(ds_state, ds_gradient, ds_descent_dir,
             return alpha
 
         alpha = alpha/2.0
+
+def tlm_hessaction(sicopolis_dir,
+                   log_file,
+                   sico_out_folder,
+                   ad_output_nc = "ad_output_tlm_hessaction.nc",
+                   exec_cmd = "./driverforwardhessaction",
+                   dict_masks = None):
+
+    run_exec(sicopolis_dir=sicopolis_dir,
+             log_file=log_file,
+             sico_out_folder=sico_out_folder,
+             ad_output_nc=ad_output_nc,
+             exec_cmd=exec_cmd)
+
+    ad_io_dir = sicopolis_dir + "/src/subroutines/tapenade/ad_io"
+    ds_tlm_hessaction = xr.open_dataset(ad_io_dir + "/" + ad_output_nc)
+
+    ds_subset = subset_of_ds(ds_tlm_hessaction, "type", "tlmhessaction")
+
+    if dict_masks is not None:
+        for field in dict_masks:
+
+            var = field + "d"
+            if var not in ds_subset:
+                raise ValueError(f"tlm_hessaction: {var} not in the output dataset.")
+            if dict_masks[field].shape != ds_subset[var].shape:
+                raise ValueError(f"tlm_hessaction: Mask for {var} does not have the same shape as var.")
+
+            ds_subset[var].data = ds_subset[var].data*dict_masks[field]
+
+    return ds_subset
+
+def exch_type_tlm_adj_hessaction(ds, type_old, type_new):
+
+    ds = ds.copy()
+    rename_dict = {}
+    for var in ds:
+        if "type" not in ds[var].attrs:
+            raise ValueError(f"exch_type_tlm_adj_hessaction: {var} does not have a type attribute.")
+        if ds[var].attrs["type"] != type_old:
+            raise ValueError(f"exch_type_tlm_adj: {var} does not have type {type_old}.")
+        if type_old == "tlmhessaction" and type_new == "adjhessaction":
+            new_name = var[:-1] + "b"
+        elif type_old == "tlm" and type_new == "adj":
+            new_name = var[:-1] + "b"
+        elif type_old == "adjhessaction" and type_new == "tlmhessaction":
+            new_name = var[:-1] + "d"
+        elif type_old == "adj" and type_new == "tlm":
+            new_name = var[:-1] + "d"
+        else:
+            raise ValueError("exch_type_tlm_adj_hessaction: (type_old, type_new) should be (tlm, adj), (adj, tlm), (tlmhessaction, adjhessaction), (adjhessaction, tlmhessaction).")
+
+        rename_dict[var] = new_name
+        ds[var].attrs["type"] = type_new
+
+    ds = ds.rename(rename_dict)
+
+    return ds.copy()
+
+def adj_hessaction(sicopolis_dir,
+                   log_file,
+                   sico_out_folder,
+                   ad_output_nc = "ad_output_adj_hessaction.nc",
+                   exec_cmd = "./driveradjointhessaction"):
+
+    run_exec(sicopolis_dir=sicopolis_dir,
+             log_file=log_file,
+             sico_out_folder=sico_out_folder,
+             ad_output_nc=ad_output_nc,
+             exec_cmd=exec_cmd)
+
+    ad_io_dir = sicopolis_dir + "/src/subroutines/tapenade/ad_io"
+    ds_tlm_hessaction = xr.open_dataset(ad_io_dir + "/" + ad_output_nc)
+
+    ds_subset = subset_of_ds(ds_tlm_hessaction, "type", "adj")
+
+    return ds_subset
 
