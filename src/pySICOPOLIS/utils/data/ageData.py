@@ -148,6 +148,10 @@ def correctAgeDataset(ds_age: Dataset,
                                            np.ones((1,jData.shape[0],iData.shape[0]), 
                                                    dtype = np.float64)), 
                                            axis = 0)
+        safe_age = (age > 0) & (age_uncert_clean > 0)
+        ratio = np.zeros_like(age, dtype=float)
+        ratio[safe_age] = age_uncert_clean[safe_age] / age[safe_age]
+        age_uncert_clean[(safe_age) & (ratio <= 0.1)] = 0.1 * age[(safe_age) & (ratio <= 0.1)]
 
         # DataArray for age uncertainty
         da_age_uncert = xr.DataArray(
