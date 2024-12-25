@@ -245,7 +245,7 @@ def eval_gradient(sicopolis_dir,
              exec_cmd)
 
     ad_io_dir = sicopolis_dir + "/src/subroutines/tapenade/ad_io"
-    ds_gradient = xr.open_dataset(ad_io_dir + '/ad_output_adj.nc')
+    ds_gradient = xr.open_dataset(ad_io_dir + "/" + ad_output_nc)
 
     if dict_fields_or_scalars is not None:
         for var in dict_fields_or_scalars:
@@ -260,7 +260,7 @@ def eval_gradient(sicopolis_dir,
                     fieldb_sum = np.sum(ds_gradient[varb].data)
                     ds_gradient[varb] = xr.DataArray([fieldb_sum], dims=["scalar"], attrs=ds_gradient[varb].attrs)
                 else:
-                    raise ValueError(f"eval_gradient: {var} not present in ds_gradient!")
+                    raise ValueError(f"eval_gradient: {varb} not present in ds_gradient!")
 
     if fields_to_ignore is not None:
         return ds_gradient.drop_vars(field + "b" for field in fields_to_ignore)
@@ -329,6 +329,38 @@ def ds_compatibility_prep(list_ds, list_types,
 
     return ds_subset_0, ds_subset_1
 
+def linear_sum(list_ds, list_alphas, list_types, fields_to_ignore = None):
+
+    if len(list_ds) != 2 or len(list_alphas) != 2 or len(list_types) != 2:
+        raise ValueError("linear_sum: Only works for two ds, alphas, and types.")
+
+    ds_subset_1, ds_subset_2 = ds_compatibility_prep(list_ds,
+                                                     list_types,
+                                                     fields_to_ignore = fields_to_ignore)
+
+    for var_1 in ds_subset_1:
+
+        if list_types[0] != "nodiff":
+            temp_1 = var_1[:-1]
+        else:
+            temp_1 = var_1
+
+        for var_2 in ds_subset_2:
+
+            if list_types[1] != "nodiff":
+                temp_2 = var_2[:-1]
+            else:
+                temp_2 = var_2
+
+            if temp_1 == temp_2:
+                if ds_subset_1[var_1].data.shape != ds_subset_2[var_2].data.shape:
+                    raise ValueError("linear_sum: {var_1}, {var_2} do not have the same shape in both datasets.")
+
+                if fields_to_ignore and temp_1 not in fields_to_ignore:
+                    ds_subset_1[var_1].data = list_alphas[0]*ds_subset_1[var_1].data.copy() + list_alphas[1]*ds_subset_2[var_2].data.copy()
+
+    return ds_subset_1
+ 
 def L2_inner_product(ds_1, ds_2, type_var, fields_to_ignore = None):
 
     ds_subset_1, ds_subset_2 = ds_compatibility_prep([ds_1, ds_2],
@@ -486,18 +518,38 @@ def adj_hessaction(sicopolis_dir,
                    log_file,
                    sico_out_folder,
                    ad_output_nc = "ad_output_adj_hessaction.nc",
-                   exec_cmd = "./driveradjointhessaction"):
+                   exec_cmd = "./driveradjointhessaction",
+                   fields_to_ignore = None,
+                   dict_fields_or_scalars = None):
 
-    run_exec(sicopolis_dir=sicopolis_dir,
-             log_file=log_file,
-             sico_out_folder=sico_out_folder,
-             ad_output_nc=ad_output_nc,
-             exec_cmd=exec_cmd)
+    run_exec(sicopolis_dir,
+             log_file,
+             sico_out_folder,
+             ad_output_nc,
+             exec_cmd)
 
     ad_io_dir = sicopolis_dir + "/src/subroutines/tapenade/ad_io"
-    ds_tlm_hessaction = xr.open_dataset(ad_io_dir + "/" + ad_output_nc)
+    ds_adj = xr.open_dataset(ad_io_dir + "/" + ad_output_nc)
 
-    ds_subset = subset_of_ds(ds_tlm_hessaction, "type", "adj")
+    if dict_fields_or_scalars is not None:
+        for var in dict_fields_or_scalars:
 
-    return ds_subset
+            if dict_fields_or_scalars[var] == "scalar":
+            
+                varb = var + "b"
+    
+                if varb in ds_adj:
+                    if ds_adj[varb].attrs["type"] != "adj":
+                        raise ValueError(f"adj_hessaction: A supposedly adjoint variable should have attribute type adj!")
+                    fieldb_sum = np.sum(ds_adj[varb].data)
+                    ds_adj[varb] = xr.DataArray([fieldb_sum], dims=["scalar"], attrs=ds_adj[varb].attrs)
+                else:
+                    raise ValueError(f"adj_hessaction: {varb} not present in ds_adj!")
+
+    ds_subset = subset_of_ds(ds_adj, "type", "adj")
+
+    if fields_to_ignore is not None:
+        return ds_subset.drop_vars(field + "b" for field in fields_to_ignore)
+    else:
+        return ds_subset
 
