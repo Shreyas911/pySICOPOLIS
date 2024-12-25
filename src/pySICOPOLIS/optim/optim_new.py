@@ -21,12 +21,13 @@ class DataAssimilation:
                  dict_ad_log_file_suffixes: Dict[str, str],
                  dict_ad_nc_suffixes: Dict[str, str],
                  dict_og_params_fields_vals: Dict[str, Union[Float[np.ndarray, "dimz dimy dimx"],
-                                                            Float[np.ndarray, "dimy dimx"],
-                                                            float]],
+                                                             Float[np.ndarray, "dimy dimx"],
+                                                             float]],
                  dict_params_fields_num_dims: Dict[str, str],
                  dict_params_coords: Dict[str, Float[np.ndarray, "dim"]],
                  dict_params_attrs_type: Dict[str, str],
                  dict_params_fields_or_scalars: Dict[str, str],
+                 dict_masks_observables: Dict[str, Union[Float[np.ndarray, "dimz dimy dimx"], Float[np.ndarray, "dimy dimx"]]], 
                  list_fields_to_ignore: Optional[List[str]] = None) -> None:
         
         super().__init__()
@@ -82,13 +83,15 @@ class DataAssimilation:
 
         self.dict_tlm_action_fields_num_dims = create_dict_tlm_action(dict_params_fields_num_dims)
         self.dict_tlm_action_coords = create_dict_tlm_action(dict_params_coords)
-        self.dict_tlm_action_attrs_type = create_dict_tlm_action(dict_params_attrs_type, "tlm_action")
+        self.dict_tlm_action_attrs_type = create_dict_tlm_action(dict_params_attrs_type, "tlm")
         self.dict_tlm_action_fields_or_scalars = create_dict_tlm_action(dict_params_fields_or_scalars)
 
         self.NTDAMAX = dict_params_coords["time_ad"].shape[0] - 1
         self.KCMAX   = dict_params_coords["zeta_c"].shape[0] - 1
         self.JMAX    = dict_params_coords["y"].shape[0] - 1
         self.IMAX    = dict_params_coords["x"].shape[0] - 1
+
+        self.dict_masks_observables = dict_masks_observables
 
         self.list_fields_to_ignore = list_fields_to_ignore
 
@@ -306,7 +309,7 @@ class DataAssimilation:
     def eval_gradient(self) -> Any:
 
         ds_gradient = self.run_exec(ad_key = "adj")
-        ds_gradient = self.subset_of_ds(ds_gradient, attr_key = "type", attr_value = "adj")
+        ds_subset_gradient = self.subset_of_ds(ds_gradient, attr_key = "type", attr_value = "adj")
 
         if self.dict_params_fields_or_scalars is not None:
 
@@ -316,18 +319,18 @@ class DataAssimilation:
                 
                     varb = var + "b"
         
-                    if varb in ds_gradient:
-                        if ds_gradient[varb].attrs["type"] != "adj":
+                    if varb in ds_subset_gradient:
+                        if ds_subset_gradient[varb].attrs["type"] != "adj":
                             raise ValueError(f"eval_gradient: A supposedly adjoint variable should have attribute type adj!")
-                        fieldb_sum = np.sum(ds_gradient[varb].data)
-                        ds_gradient[varb] = xr.DataArray([fieldb_sum], dims=["scalar"], attrs=ds_gradient[varb].attrs)
+                        fieldb_sum = np.sum(ds_subset_gradient[varb].data)
+                        ds_subset_gradient[varb] = xr.DataArray([fieldb_sum], dims=["scalar"], attrs=ds_subset_gradient[varb].attrs)
                     else:
-                        raise ValueError(f"eval_gradient: {varb} not present in ds_gradient!")
+                        raise ValueError(f"eval_gradient: {varb} not present in ds_subset_gradient!")
 
         if self.list_fields_to_ignore is not None:
-            return ds_gradient.drop_vars(field + "b" for field in self.list_fields_to_ignore)
+            return ds_subset_gradient.drop_vars(field + "b" for field in self.list_fields_to_ignore)
         else:
-            return ds_gradient
+            return ds_subset_gradient
 
     @beartype
     def line_search(self,
@@ -445,8 +448,123 @@ class DataAssimilation:
                                                                       self.dict_tlm_action_fields_or_scalars,
                                                                       "tlm_action")
 
-        return ds_inp_tlm_action
+        if self.dict_tlm_action_fields_or_scalars is not None:
+
+            for var in self.dict_tlm_action_fields_or_scalars:
+    
+                if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+        
+                    if var in ds_inp_tlm_action:
+                        ds_inp_tlm_action[var] = xr.DataArray([ds_inp_tlm_action[var].data.flat[0]], 
+                                                              dims=["scalar"], attrs=ds_inp_tlm_action[var].attrs)
+                    else:
+                        raise ValueError(f"create_ad_tlm_action_input_nc: {var} not present in ds_inp_tlm_action!")
+       
+        return self.subset_of_ds(ds_inp_tlm_action, "type", "tlm")
+
+    @beartype
+    def eval_tlm_action(self) -> Any:
+
+        ds_tlm_action = self.run_exec(ad_key = "tlm_action")
+        ds_subset_tlm_action = self.subset_of_ds(ds_tlm_action, attr_key = "type", attr_value = "tlmhessaction")
+
+        list_vars = [var[:-1] for var in ds_subset_tlm_action]
+        if list(self.dict_masks_observables.keys()) != list_vars:
+            raise ValueError("eval_tlm_action: The observables seem to be different than expected.")
+
+        return ds_subset_tlm_action
+
+    @beartype
+    def eval_noise_cov_inv_action(self, ds_subset_tlm_action: Any) -> Any:
+
+        ds_subset_tlm_action = ds_subset_tlm_action.copy()
+
+        list_vars = [var[:-1] for var in ds_subset_tlm_action]
+        if list(self.dict_masks_observables.keys()) != list_vars:
+            raise ValueError("eval_noise_cov_inv_action: The observables seem to be different than expected.")
+       
+        if not all(value is None for value in self.dict_masks_observables.values()):
+            for key, value in self.dict_masks_observables.items():
+                if value is not None:
+                    if value.shape != ds_subset_tlm_action[key + "d"].data.shape:
+                        raise ValueError(f"The right shaped noise covariance mask has not been prescribed for {key}.")
+                    ds_subset_tlm_action[key + "d"].data = ds_subset_tlm_action[key + "d"].data*value
+
+        dict_new_names = {}
+
+        for var in ds_subset_tlm_action:
+            ds_subset_tlm_action[var].attrs["type"] = "adjhessaction" 
+            dict_new_names[var] = var[:-1] + "b"
+        
+        ds_inp_subset_adj_action = ds_subset_tlm_action.rename(dict_new_names)
+        ds_subset_params = self.eval_params()
+
+        dict_fields_num_dims = self.dict_params_fields_num_dims.copy()
+        dict_coords = self.dict_params_coords.copy()
+        dict_attrs_type = self.dict_params_attrs_type.copy()
+        dict_fields_or_scalars = self.dict_params_fields_or_scalars.copy()
+        dict_fields_vals = {}
+
+        for var in ds_subset_params:
+            if "type" not in ds_subset_params[var].attrs:
+                raise ValueError(f"write_params: Attribute 'type' is missing for variable {var} in ds_subset_params.")
+            elif ds_subset_params[var].attrs["type"] != "nodiff":
+                raise ValueError(f"write_params: Type of {var} is not what is expected i.e. 'nodiff'.")
+            elif self.dict_params_fields_or_scalars and self.dict_params_fields_or_scalars[var] == "scalar":
+                dict_fields_vals[var] = ds_subset_params[var].data[0].copy()
+            else:
+                dict_fields_vals[var] = ds_subset_params[var].data.copy()
+
+
+        for var in ds_inp_subset_adj_action:
+            dict_fields_num_dims[var] = str(len(ds_inp_subset_adj_action[var].data.shape)) + "D"
+            dict_attrs_type[var] = "adjhessaction"
+            dict_fields_or_scalars[var] = "field"
+            dict_fields_vals[var] = ds_inp_subset_adj_action[var].data.copy()
             
+        ds_inp_adj_action = self.create_ad_nodiff_or_adj_input_nc(dict_fields_vals = dict_fields_vals,
+                                                                  dict_fields_num_dims = dict_fields_num_dims,
+                                                                  dict_coords = dict_coords,
+                                                                  dict_attrs_type = dict_attrs_type,
+                                                                  dict_fields_or_scalars = dict_fields_or_scalars,
+                                                                  ad_key = "adj_action")
+ 
+        return self.subset_of_ds(ds_inp_adj_action, "type", "adjhessaction")
+
+    @beartype
+    def eval_adj_action(self) -> Any:
+
+        ds_adj_action = self.run_exec(ad_key = "adj_action")
+        ds_subset_adj_action = self.subset_of_ds(ds_adj_action, attr_key = "type", attr_value = "adj")
+
+        if self.dict_params_fields_or_scalars is not None:
+
+            for var in self.dict_params_fields_or_scalars:
+    
+                if self.dict_params_fields_or_scalars[var] == "scalar":
+                
+                    varb = var + "b"
+        
+                    if varb in ds_subset_adj_action:
+                        if ds_subset_adj_action[varb].attrs["type"] != "adj":
+                            raise ValueError(f"eval_adj_action: A supposedly adjoint variable should have attribute type adj!")
+                        fieldb_sum = np.sum(ds_subset_adj_action[varb].data)
+                        ds_subset_adj_action[varb] = xr.DataArray([fieldb_sum], dims=["scalar"], attrs=ds_subset_adj_action[varb].attrs)
+                    else:
+                        raise ValueError(f"eval_adj_action: {varb} not present in ds_subset_adj_action!")
+
+        if self.list_fields_to_ignore is not None:
+            return ds_subset_adj_action.drop_vars(field + "b" for field in self.list_fields_to_ignore)
+        else:
+            return ds_subset_adj_action
+
+    @beartype
+    def eval_misfit_hessian_action(self) -> Any:
+        ds_subset_tlm_action = self.eval_tlm_action()
+        ds_inp_subset_adj_action = self.eval_noise_cov_inv_action(ds_subset_tlm_action)
+        return self.eval_adj_action()
+
+
     @beartype
     def linear_sum(self, list_subset_ds: List[Any], list_alphas: List[float], list_types: List[str]) -> Any:
 
@@ -503,7 +621,7 @@ class DataAssimilation:
     
                 if basic_str_0 == basic_str_1:
                     if list_subset_ds[0][var_0].data.shape != list_subset_ds[1][var_1].data.shape:
-                        raise ValueError(f"linear_sum: {var_0}, {var_1} do not have the same shape in the two subset_ds.")
+                        raise ValueError(f"l2_inner_product: {var_0}, {var_1} do not have the same shape in the two subset_ds.")
                     if self.list_fields_to_ignore and basic_str_0 not in self.list_fields_to_ignore:
                         inner_product = inner_product + np.sum(list_subset_ds[0][var_0].data*list_subset_ds[1][var_1].data)
     
@@ -587,7 +705,7 @@ class DataAssimilation:
                 if self.list_fields_to_ignore and basic_str in self.list_fields_to_ignore:
                     pass
                 else:
-                    raise ValueError(f"ds_subset_compatibility_check: {var_0} not present in second subset_ds when {var_1} is present in first subset_ds.")
+                    raise ValueError(f"ds_subset_compatibility_check: {var_0} not present in first subset_ds when {var_1} is present in second subset_ds.")
     
         return None
 
