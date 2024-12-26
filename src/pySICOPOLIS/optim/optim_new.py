@@ -434,13 +434,20 @@ class DataAssimilation:
             elif bool_randomize:
                 dict_tlm_action_only_fields_vals = {}
                 for key, value in dict_params_only_fields_vals.items():
-                    if key not in self.list_fields_to_ignore:
-                        dict_tlm_action_only_fields_vals[key + "d"] = np.random.randn(*value.shape)
-                    else:
+                    if self.list_fields_to_ignore and key in self.list_fields_to_ignore and isinstance(value, np.ndarray) and not isinstance(value, (str, bytes)):
                         dict_tlm_action_only_fields_vals[key + "d"] = np.zeros(value.shape, dtype=float)
+                    elif self.list_fields_to_ignore and key in self.list_fields_to_ignore and isinstance(value, float):
+                        dict_tlm_action_only_fields_vals[key + "d"] = 0.0
+                    elif isinstance(value, np.ndarray) and not isinstance(value, (str, bytes)):
+                        dict_tlm_action_only_fields_vals[key + "d"] = np.random.randn(*value.shape)
+                    elif isinstance(value, float):
+                        dict_tlm_action_only_fields_vals[key + "d"] = np.random.randn()
+                    else:
+                        raise ValueError("create_ad_tlm_action_input_nc: Some error while creating the random vector for TLM action.")
             else:
                 raise ValueError("create_ad_tlm_action_input_nc: Somehow you have entered a condition that's simply impossible.")
-                
+
+
             ds_inp_tlm_action = self.create_ad_nodiff_or_adj_input_nc(dict_params_only_fields_vals | dict_tlm_action_only_fields_vals,
                                                                       self.dict_tlm_action_fields_num_dims,
                                                                       self.dict_tlm_action_coords,
@@ -449,7 +456,7 @@ class DataAssimilation:
                                                                       "tlm_action")
 
         if self.dict_tlm_action_fields_or_scalars is not None:
-
+ 
             for var in self.dict_tlm_action_fields_or_scalars:
     
                 if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
@@ -459,7 +466,7 @@ class DataAssimilation:
                                                               dims=["scalar"], attrs=ds_inp_tlm_action[var].attrs)
                     else:
                         raise ValueError(f"create_ad_tlm_action_input_nc: {var} not present in ds_inp_tlm_action!")
-       
+      
         return self.subset_of_ds(ds_inp_tlm_action, "type", "tlm")
 
     @beartype
