@@ -341,28 +341,26 @@ class DataAssimilation:
                     c1: float = 1.e-4) -> Tuple[float, float]:
     
         alpha = init_alpha
-        
+        ds_subset_params_orig = ds_subset_params.copy()
+        fc = self.eval_cost()
+
         while True:
             
-            ds_subset_params_old = ds_subset_params.copy()
-            fc = self.eval_cost()
-
-            try:
-                ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_descent_dir], 
+            try:                
+                ds_subset_params_new = self.linear_sum([ds_subset_params_orig, ds_subset_descent_dir], 
                                                        [1.0, alpha], ["nodiff", "adj"])
                 _ = self.write_params(ds_subset_params_new)
         
                 fc_new = self.eval_cost()
-        
                 pTg = self.l2_inner_product([ds_subset_descent_dir, ds_subset_gradient], ["adj", "adj"])
                 ratio = (fc_new - fc)/(alpha*pTg)
 
             except:
                 print("Too big step size probably crashed the simulation.")
-                _ = self.write_params(ds_subset_params_old)
+                _ = self.write_params(ds_subset_params_orig)
                 ratio = 0.0
 
-            if ratio >= c1:
+            if ratio >= c1 or alpha <= 1.e-5:
                 print(f"Step size alpha = {alpha}")
                 return alpha, fc_new
     
@@ -542,7 +540,7 @@ class DataAssimilation:
         return self.eval_adj_action()
 
     @beartype
-    def conjugate_gradient(self) -> Any:
+    def conjugate_gradient(self, tolerance_type = "superlinear") -> Any:
 
         ds_subset_params = self.eval_params()
 
@@ -592,7 +590,15 @@ class DataAssimilation:
                                           [1.0, -alpha], ["adj", "adj"])
 
             norm_r = self.l2_inner_product([ds_subset_r, ds_subset_r], ["adj", "adj"])**0.5
-            eps_TOL = min(0.5, np.sqrt(norm_gradient))*norm_gradient
+
+            if tolerance_type == "linear":
+                eps_TOL = 0.5*norm_gradient
+            elif tolerance_type == "superlinear":
+                eps_TOL = min(0.5, np.sqrt(norm_gradient))*norm_gradient
+            elif tolerance_type == "quadratic":
+                eps_TOL = min(0.5, norm_gradient)*norm_gradient
+            else:
+                raise ValueError("conjugate_gradient: Invalid tolerance_type.")
 
             if norm_r <= eps_TOL:
                 print("conjugate_gradient: Convergence.")
@@ -624,6 +630,8 @@ class DataAssimilation:
     def inexact_gn_hessian_cg(self,
                               MAX_ITERS: int,
                               init_alpha: float = 1.0,
+                              init_alpha_gd: float = 1.0,
+                              cg_tolerance_type: str = "superlinear",
                               c1: float = 1.e-4) -> Any:
 
         ds_inp = self.create_ad_nodiff_or_adj_input_nc(dict_fields_vals = self.dict_og_params_fields_vals,
@@ -643,15 +651,33 @@ class DataAssimilation:
 
             ds_subset_params = self.eval_params()
             ds_subset_gradient = self.eval_gradient()
-            ds_subset_descent_dir = self.conjugate_gradient()
+            ds_subset_descent_dir = self.conjugate_gradient(cg_tolerance_type)
 
             alpha, fc_new = self.line_search(ds_subset_params,
                                              ds_subset_gradient,
                                              ds_subset_descent_dir,
                                              init_alpha, c1)
 
-            ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_descent_dir], 
-                                                   [1.0, alpha], ["nodiff", "adj"])
+            if alpha <= 1.e-5:
+
+                print("Step size is too small for any real improvement, switching to gradient descent for this step.")
+
+                ds_subset_neg_gradient = self.linear_sum([ds_subset_gradient, ds_subset_gradient], 
+                                                        [0.0, -1.0], ["adj", "adj"])
+
+                alpha, fc_new = self.line_search(ds_subset_params,
+                                                 ds_subset_gradient,
+                                                 ds_subset_neg_gradient,
+                                                 init_alpha_gd, c1)
+
+                ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_neg_gradient], 
+                                                       [1.0, alpha], ["nodiff", "adj"])
+                
+            else:
+
+                ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_descent_dir], 
+                                                       [1.0, alpha], ["nodiff", "adj"])
+
             _ = self.write_params(ds_subset_params_new)
 
             print("-------------------------------------")
