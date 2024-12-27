@@ -27,7 +27,8 @@ class DataAssimilation:
                  dict_params_coords: Dict[str, Float[np.ndarray, "dim"]],
                  dict_params_attrs_type: Dict[str, str],
                  dict_params_fields_or_scalars: Dict[str, str],
-                 dict_masks_observables: Dict[str, Union[Float[np.ndarray, "dimz dimy dimx"], Float[np.ndarray, "dimy dimx"]]], 
+                 dict_masks_observables: Dict[str, Optional[Union[Float[np.ndarray, "dimz dimy dimx"], 
+                                                                  Float[np.ndarray, "dimy dimx"]]]], 
                  list_fields_to_ignore: Optional[List[str]] = None) -> None:
         
         super().__init__()
@@ -337,7 +338,8 @@ class DataAssimilation:
                     ds_subset_params: Any, 
                     ds_subset_gradient: Any, 
                     ds_subset_descent_dir: Any,
-                    init_alpha: float = 1.0, 
+                    init_alpha: float = 1.0,
+                    min_alpha_tol: float = 1.e-10,
                     c1: float = 1.e-4) -> Tuple[float, float]:
     
         alpha = init_alpha
@@ -360,7 +362,10 @@ class DataAssimilation:
                 _ = self.write_params(ds_subset_params_orig)
                 ratio = 0.0
 
-            if ratio >= c1 or alpha <= 1.e-5:
+            if alpha <= min_alpha_tol:
+                print(f"Minimum tolerable step size alpha reached.")
+
+            if ratio >= c1 or alpha <= min_alpha_tol:
                 print(f"Step size alpha = {alpha}")
                 return alpha, fc_new
     
@@ -371,6 +376,7 @@ class DataAssimilation:
                          MAX_ITERS: int, 
                          MIN_GRAD_NORM_TOL: Optional[float] = None, 
                          init_alpha: float = 1.0, 
+                         min_alpha_tol: float = 1.e-10,
                          c1: float = 1.e-4) -> Any:
 
         ds_inp = self.create_ad_nodiff_or_adj_input_nc(dict_fields_vals = self.dict_og_params_fields_vals,
@@ -402,7 +408,7 @@ class DataAssimilation:
             alpha, fc_new = self.line_search(ds_subset_params,
                                              ds_subset_gradient,
                                              ds_subset_descent_dir,
-                                             init_alpha, c1)
+                                             init_alpha, min_alpha_tol, c1)
 
             ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_gradient], 
                                                    [1.0, -alpha], ["nodiff", "adj"])
@@ -629,8 +635,10 @@ class DataAssimilation:
     @beartype
     def inexact_gn_hessian_cg(self,
                               MAX_ITERS: int,
-                              init_alpha: float = 1.0,
+                              init_alpha_cg: float = 1.0,
+                              min_alpha_cg_tol: float = 1.e-10,
                               init_alpha_gd: float = 1.0,
+                              min_alpha_gd_tol: float = 1.e-10,
                               cg_tolerance_type: str = "superlinear",
                               c1: float = 1.e-4) -> Any:
 
@@ -656,11 +664,11 @@ class DataAssimilation:
             alpha, fc_new = self.line_search(ds_subset_params,
                                              ds_subset_gradient,
                                              ds_subset_descent_dir,
-                                             init_alpha, c1)
+                                             init_alpha_cg, min_alpha_cg_tol, c1)
 
-            if alpha <= 1.e-5:
+            if alpha <= min_alpha_cg_tol:
 
-                print("Step size is too small for any real improvement, switching to gradient descent for this step.")
+                print(f"Step size alpha {alpha} is too small for any real improvement with Inexact GN-Hessian CG, switching to gradient descent for this step.")
 
                 ds_subset_neg_gradient = self.linear_sum([ds_subset_gradient, ds_subset_gradient], 
                                                         [0.0, -1.0], ["adj", "adj"])
@@ -668,7 +676,7 @@ class DataAssimilation:
                 alpha, fc_new = self.line_search(ds_subset_params,
                                                  ds_subset_gradient,
                                                  ds_subset_neg_gradient,
-                                                 init_alpha_gd, c1)
+                                                 init_alpha_gd, min_alpha_gd_tol, c1)
 
                 ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_neg_gradient], 
                                                        [1.0, alpha], ["nodiff", "adj"])
