@@ -29,7 +29,9 @@ class DataAssimilation:
                  dict_params_fields_or_scalars: Dict[str, str],
                  dict_masks_observables: Dict[str, Optional[Union[Float[np.ndarray, "dimz dimy dimx"], 
                                                                   Float[np.ndarray, "dimy dimx"]]]], 
-                 list_fields_to_ignore: Optional[List[str]] = None) -> None:
+                 list_fields_to_ignore: Optional[List[str]] = None,
+                 bool_surfvel_cost: bool = False,
+                 filename_vx_vy_s_g: str = None) -> None:
         
         super().__init__()
 
@@ -93,8 +95,16 @@ class DataAssimilation:
         self.IMAX    = dict_params_coords["x"].shape[0] - 1
 
         self.dict_masks_observables = dict_masks_observables
-
         self.list_fields_to_ignore = list_fields_to_ignore
+
+        if bool_surfvel_cost and filename_vx_vy_s_g is None:
+            raise ValueError("DataAssimilation: File to read terminal surface velocity field values not specified.")
+        
+        if not bool_surfvel_cost and filename_vx_vy_s_g is not None:
+            raise ValueError("DataAssimilation: File to read terminal surface velocity field values specified even when not needed.")
+
+        self.bool_surfvel_cost = bool_surfvel_cost
+        self.filename_vx_vy_s_g = filename_vx_vy_s_g
 
     @beartype
     def create_ad_nodiff_or_adj_input_nc(self,
@@ -541,8 +551,40 @@ class DataAssimilation:
 
     @beartype
     def eval_misfit_hessian_action(self) -> Any:
+
         ds_subset_tlm_action = self.eval_tlm_action()
         ds_inp_subset_adj_action = self.eval_noise_cov_inv_action(ds_subset_tlm_action)
+        ds_inp_adj_action = xr.open_dataset(self.dict_ad_inp_nc_files["adj_action"])
+
+        if self.bool_surfvel_cost:
+
+            vx_s_g_final, vy_s_g_final = self.get_vx_vy_s(self.filename_vx_vy_s_g)
+
+            da_vx_s_g_final = xr.DataArray(
+                        data=vx_s_g_final,
+                        dims=["y", "x"],
+                        coords={"y": self.dict_params_coords["y"].copy(),
+                                "x": self.dict_params_coords["x"].copy()
+                                },
+                        name="vx_s_g_final"
+                    )
+
+            da_vy_s_g_final = xr.DataArray(
+                        data=vy_s_g_final,
+                        dims=["y", "x"],
+                        coords={"y": self.dict_params_coords["y"].copy(),
+                                "x": self.dict_params_coords["x"].copy()
+                                },
+                        name="vy_s_g_final"
+                    )
+
+        ds_inp_adj_action["vx_s_g_final"] = da_vx_s_g_final
+        ds_inp_adj_action["vy_s_g_final"] = da_vy_s_g_final
+
+        # Some weird permission denied error if this file is not removed first.
+        self.remove_dir(self.dict_ad_inp_nc_files["adj_action"])
+        ds_inp_adj_action.to_netcdf(self.dict_ad_inp_nc_files["adj_action"])
+            
         return self.eval_adj_action()
 
     @beartype
@@ -833,7 +875,6 @@ class DataAssimilation:
         ds_inp_tlm_or_adj_action = self.subset_of_ds(ds_inp_tlm_or_adj_action, "type", new_type)
 
         if og_type == "adj":
-
 
             if dict_fields_or_scalars is not None:
     
