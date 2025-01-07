@@ -28,7 +28,11 @@ class DataAssimilation:
                  dict_params_attrs_type: Dict[str, str],
                  dict_params_fields_or_scalars: Dict[str, str],
                  dict_masks_observables: Dict[str, Optional[Union[Float[np.ndarray, "dimz dimy dimx"], 
-                                                                  Float[np.ndarray, "dimy dimx"]]]], 
+                                                                  Float[np.ndarray, "dimy dimx"]]]],
+                 dict_prior_alphas: Dict[str, float],
+                 dict_prior_sigmas: Dict[str, Optional[float]],
+                 dict_prior_gammas: Dict[str, Optional[float]],
+                 dict_prior_deltas: Dict[str, Optional[float]],
                  list_fields_to_ignore: Optional[List[str]] = None,
                  bool_surfvel_cost: bool = False,
                  filename_vx_vy_s_g: str = None) -> None:
@@ -93,8 +97,19 @@ class DataAssimilation:
         self.KCMAX   = dict_params_coords["zeta_c"].shape[0] - 1
         self.JMAX    = dict_params_coords["y"].shape[0] - 1
         self.IMAX    = dict_params_coords["x"].shape[0] - 1
+        self.delta_x = dict_params_coords["x"][1] - dict_params_coords["x"][0]
+        self.delta_y = dict_params_coords["y"][1] - dict_params_coords["y"][0]
 
         self.dict_masks_observables = dict_masks_observables
+
+        if dict_og_params_fields_vals.keys() != dict_prior_alphas.keys() != dict_prior_sigmas.keys() != dict_prior_gammas.keys() != dict_prior_deltas.keys():
+            raise ValueError("DataAssimilation: Inconsistent keys for prior dicts.")
+
+        self.dict_prior_alphas = dict_prior_alphas
+        self.dict_prior_sigmas = dict_prior_sigmas
+        self.dict_prior_gammas = dict_prior_gammas
+        self.dict_prior_deltas = dict_prior_deltas
+
         self.list_fields_to_ignore = list_fields_to_ignore
 
         if bool_surfvel_cost and filename_vx_vy_s_g is None:
@@ -221,7 +236,9 @@ class DataAssimilation:
             ds[field] = da_field
             if field in dict_attrs_type:
                 ds[field].attrs["type"] = dict_attrs_type[field]
-            
+
+        # Some weird permission denied error if this file is not removed first.
+        self.remove_dir(self.dict_ad_inp_nc_files[ad_key])  
         ds.to_netcdf(self.dict_ad_inp_nc_files[ad_key])
 
         return ds
@@ -588,21 +605,248 @@ class DataAssimilation:
         return self.eval_adj_action()
 
     @beartype
+    def eval_sqrt_prior_cov_inv_action(self) -> Any:
+
+        ds_inp_tlm = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
+
+        ds_subset_state = self.subset_of_ds(ds_inp_tlm, "type", "nodiff")
+        ds_subset_tlm = self.subset_of_ds(ds_inp_tlm, "type", "tlm")
+
+        for var in ds_subset_tlm:
+
+            basic_str = var[:-1]
+
+            if self.dict_params_fields_or_scalars[basic_str] == "scalar":
+
+                if not isinstance(self.dict_prior_sigmas[basic_str], float):
+                    raise ValueError("eval_sqrt_prior_cov_inv_action: sigma for scalar field should also be scalar.")
+
+                ds_subset_tlm[var].data = ds_subset_tlm[var].data / self.dict_prior_sigmas[basic_str]
+
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D":
+
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_gammas[basic_str]
+                delta_x = self.delta_x
+                delta_y = self.delta_y
+                IMAX = self.IMAX
+                JMAX = self.JMAX
+
+                field = ds_subset_tlm[var].data.copy()
+                field_new = delta*field.copy()
+
+                field_new[0, 0] = field_new[0, 0] - gamma*((field[0, 1]-field[0, 0])/delta_x**2 + (field[1, 0]-field[0,0])/delta_y**2)
+                field_new[JMAX, 0] = field_new[JMAX, 0] - gamma*((field[JMAX, 1]-field[JMAX, 0])/delta_x**2 + (field[JMAX-1, 0]-field[JMAX, 0])/delta_y**2)
+                field_new[0, IMAX] = field_new[0, IMAX] - gamma*((field[0, IMAX-1]-field[0, IMAX])/delta_x**2 + (field[1, IMAX]-field[0, IMAX])/delta_y**2)
+                field_new[JMAX, IMAX] = field_new[JMAX, IMAX] - gamma*((field[JMAX, IMAX-1]-field[JMAX, IMAX])/delta_x**2 + (field[JMAX-1, IMAX]-field[JMAX, IMAX])/delta_y**2)
+
+                field_new[1:JMAX, 0] = field_new[1:JMAX, 0] - gamma*((field[0:JMAX-1, 0] - 2*field[1:JMAX, 0] + field[2:, 0])/delta_y**2 + (field[1:JMAX, 1] - field[1:JMAX, 0])/delta_x**2)
+                field_new[1:JMAX, IMAX] = field_new[1:JMAX, IMAX] - gamma*((field[0:JMAX-1, IMAX] - 2*field[1:JMAX, IMAX] + field[2:, IMAX]) / delta_y**2 + (field[1:JMAX, IMAX-1] - field[1:JMAX, IMAX]) / delta_x**2)
+
+                field_new[0, 1:IMAX] = field_new[0, 1:IMAX] - gamma*((field[1, 1:IMAX] - field[0, 1:IMAX])/delta_y**2 + (field[0, 0:IMAX-1] - 2*field[0, 1:IMAX] + field[0, 2:])/delta_x**2)
+                field_new[JMAX, 1:IMAX] = field_new[JMAX, 1:IMAX] - gamma*((field[JMAX-1, 1:IMAX] - field[JMAX, 1:IMAX]) / delta_y**2 + (field[JMAX, 0:IMAX-1] - 2*field[JMAX, 1:IMAX] + field[JMAX, 2:]) / delta_x**2)
+
+                for j in range(1, JMAX):
+                    for i in range(1, IMAX):
+                        field_new[j, i] = field_new[j, i] - gamma*(field[j, i-1] - 2*field[j, i] + field[j, i+1]) / delta_x**2
+                        field_new[j, i] = field_new[j, i] - gamma*(field[j-1, i] - 2*field[j, i] + field[j+1, i]) / delta_y**2
+
+                ds_subset_tlm[var].data = field_new.copy()
+
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D":
+
+                if not isinstance(self.dict_prior_sigmas[basic_str], np.ndarray) or ds_subset_tlm[var].data.shape != self.dict_prior_sigmas[basic_str].shape:
+                    raise ValueError("eval_sqrt_prior_cov_inv_action: sigma for 3D field should also be a 3D np.ndarray with the correct shape.")
+
+                ds_subset_tlm[var].data = ds_subset_tlm[var].data / self.dict_prior_sigmas[basic_str]
+
+            else:
+                raise ValueError("eval_sqrt_prior_cov_inv_action: Issue with var. Prior action only works for scalar, or 2D and 3D fields.")
+
+        ds_out = xr.merge([ds_subset_state, ds_subset_tlm])
+
+        # Some weird permission denied error if this file is not removed first.
+        self.remove_dir(self.dict_ad_inp_nc_files["tlm_action"])
+        ds_out.to_netcdf(self.dict_ad_inp_nc_files["tlm_action"])
+
+        return ds_subset_tlm
+
+    @beartype
+    def eval_sqrt_prior_cov_action(self, 
+                                   ad_key_adj_or_adj_action_or_tlm_action: str, 
+                                   MAX_ITERS_SOR: int = 100, 
+                                   OMEGA_SOR: float = 1.5) -> Any:
+
+        if not (1.0 <= OMEGA_SOR <= 2.0):
+            raise ValueError("eval_sqrt_prior_cov_action: Relaxation factor for SOR solver should be between 1 and 2.")
+
+        if ad_key_adj_or_adj_action_or_tlm_action not in ["tlm_action", "adj", "adj_action"]:
+            raise ValueError("eval_sqrt_prior_cov_inv_action: Can only act on tlm or adj or adj_action quantities.")
+
+        if ad_key_adj_or_adj_action_or_tlm_action == "tlm_action":
+            ds_adj_or_adj_action_or_tlm_action = xr.open_dataset(self.dict_ad_inp_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
+            ad_subset_key = "tlm"
+        else:
+            ds_adj_or_adj_action_or_tlm_action = xr.open_dataset(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
+            ad_subset_key = "adj"
+
+        ds_subset_state = self.subset_of_ds(ds_adj_or_adj_action_or_tlm_action, "type", "nodiff")
+        ds_subset_adj_or_adj_action_or_tlm_action = self.subset_of_ds(ds_adj_or_adj_action_or_tlm_action, "type", ad_subset_key)
+
+        for var in ds_subset_adj_or_adj_action_or_tlm_action:
+
+            basic_str = var[:-1]
+
+            if self.dict_params_fields_or_scalars[basic_str] == "scalar":
+
+                if not isinstance(self.dict_prior_sigmas[basic_str], float):
+                    raise ValueError("eval_sqrt_prior_cov_action: sigma for scalar field should also be scalar.")
+
+                ds_subset_adj_or_adj_action_or_tlm_action[var].data = ds_subset_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str]
+
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D":
+
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_gammas[basic_str]
+                delta_x = self.delta_x
+                delta_y = self.delta_y
+                IMAX = self.IMAX
+                JMAX = self.JMAX
+
+                field = ds_subset_adj_or_adj_action_or_tlm_action[var].data.copy()
+
+                result_old = np.copy(field)
+                result = np.copy(field)
+
+                for _ in range(MAX_ITERS_SOR):
+
+                    for j in range(JMAX+1):
+                        for i in range(IMAX+1):
+
+                            if j == 0 and i == 0:
+                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[0, 0] + gamma*(result_old[0, 1] / delta_x**2 + result_old[1, 0] / delta_y**2)
+                            elif j == JMAX and i == 0:
+                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[JMAX, 0] + gamma*(result_old[JMAX, 1] / delta_x**2 + result[JMAX-1, 0] / delta_y**2)
+                            elif j == 0 and i == IMAX:
+                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[0, IMAX] + gamma*(result[0, IMAX-1] / delta_x**2 + result_old[1, IMAX] / delta_y**2)
+                            elif j == JMAX and i == IMAX:
+                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[JMAX, IMAX] + gamma*(result[JMAX, IMAX-1] / delta_x**2 + result[JMAX-1, IMAX] / delta_y**2)
+                            elif i == 0:
+                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                bracket = field[j, 0] + gamma*((result[j-1, 0] + result_old[j+1, 0]) / delta_y**2 + result_old[j, 1] / delta_x**2)
+                            elif i == IMAX:
+                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                bracket = field[j, IMAX] + gamma*((result[j-1, IMAX] + result_old[j+1, IMAX]) / delta_y**2 + result[j, IMAX-1] / delta_x**2)
+                            elif j == 0:
+                                diagonal = delta + gamma*(2/delta_x**2 + 1/delta_y**2)
+                                bracket = field[0, i] + gamma*(result_old[1, i] / delta_y**2 + (result[0, i-1] + result_old[0, i+1]) / delta_x**2)
+                            elif j == JMAX:
+                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                bracket = field[JMAX, i] + gamma*(result[JMAX-1, i] / delta_y**2 + (result[JMAX, i-1] + result_old[JMAX, i+1]) / delta_x**2)
+                            else:
+                                diagonal = delta + 2*gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[j, i] + gamma*((result[j-1, i] + result_old[j+1, i]) / delta_y**2 + (result[j, i-1] + result_old[j, i+1]) / delta_x**2)
+
+                            result[j, i] = (1 - OMEGA_SOR) * result_old[j, i] + OMEGA_SOR / diagonal * bracket
+
+                    result_old = result.copy()
+
+                ds_subset_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D":
+
+                if not isinstance(self.dict_prior_sigmas[basic_str], np.ndarray) or ds_subset_adj_or_adj_action_or_tlm_action[var].data.shape != self.dict_prior_sigmas[basic_str].shape:
+                    raise ValueError("eval_sqrt_prior_cov_action: sigma for 3D field should also be a 3D np.ndarray with the correct shape.")
+
+                ds_subset_adj_or_adj_action_or_tlm_action[var].data = ds_subset_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str]
+
+            else:
+                raise ValueError("eval_sqrt_prior_cov_action: Issue with var. Prior action only works for scalar, or 2D and 3D fields.")
+
+        ds_out = xr.merge([ds_subset_state, ds_subset_adj_or_adj_action_or_tlm_action])
+
+        if ad_key_adj_or_adj_action_or_tlm_action == "tlm_action":
+            # Some weird permission denied error if this file is not removed first.
+            self.remove_dir(self.dict_ad_inp_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
+            ds_out.to_netcdf(self.dict_ad_inp_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
+        else:
+            # Some weird permission denied error if this file is not removed first.
+            self.remove_dir(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
+            ds_out.to_netcdf(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])            
+
+        return ds_subset_adj_or_adj_action_or_tlm_action
+
+    @beartype
+    def eval_prior_preconditioned_misfit_hessian_action(self) -> Any:
+
+        ds_subset_inp_tlm_action = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
+        ds_subset_misfit_hessian_action = self.eval_misfit_hessian_action()
+
+        return self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "adj_action")
+
+    @beartype
+    def eval_prior_preconditioned_hessian_action(self) -> Any:
+
+        ds_inp_tlm_action = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
+        ds_subset_tlm = self.subset_of_ds(ds_inp_tlm_action, "type", "tlm")
+
+        ds_misfit_hessian_action = self.eval_prior_preconditioned_misfit_hessian_action()
+
+        ds_out_adj_action = xr.open_dataset(self.dict_ad_out_nc_files["adj_action"])
+        ds_subset_state = self.subset_of_ds(ds_out_adj_action, "type", "nodiff")
+        ds_subset_adj_action = self.subset_of_ds(ds_out_adj_action, "type", "adj")
+
+        for var in ds_subset_adj_action:
+
+            basic_str = var[:-1] 
+            ds_subset_adj_action[var].data = ds_subset_adj_action[var].data + self.dict_prior_alphas[basic_str]*ds_subset_tlm[basic_str + "d"]
+
+        ds_out = xr.merge([ds_subset_state, ds_subset_adj_action])
+            
+        # Some weird permission denied error if this file is not removed first.
+        self.remove_dir(self.dict_ad_out_nc_files["adj_action"])
+        ds_out.to_netcdf(self.dict_ad_out_nc_files["adj_action"])
+
+        if self.dict_params_fields_or_scalars is not None:
+
+            for var in self.dict_params_fields_or_scalars:
+    
+                if self.dict_params_fields_or_scalars[var] == "scalar":
+                
+                    varb = var + "b"
+        
+                    if varb in ds_subset_adj_action:
+                        if ds_subset_adj_action[varb].attrs["type"] != "adj":
+                            raise ValueError(f"eval_prior_preconditioned_prior_action: A supposedly adjoint variable should have attribute type adj!")
+                        fieldb_sum = np.sum(ds_subset_adj_action[varb].data)
+                        ds_subset_adj_action[varb] = xr.DataArray([fieldb_sum], dims=["scalar"], attrs=ds_subset_adj_action[varb].attrs)
+                    else:
+                        raise ValueError(f"eval_prior_preconditioned_prior_action: {varb} not present in ds_subset_adj_action!")
+
+        return ds_subset_adj_action
+
+    @beartype
     def conjugate_gradient(self, tolerance_type = "superlinear") -> Any:
 
         ds_subset_params = self.eval_params()
 
         ds_subset_gradient = self.eval_gradient()
-        norm_gradient = self.l2_inner_product([ds_subset_gradient, ds_subset_gradient], ["adj", "adj"])**0.5
+        ds_subset_gradient_hat = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "adj")
 
-        ds_subset_p = self.linear_sum([ds_subset_gradient, ds_subset_gradient], 
-                                      [0.0, 0.0], ["adj", "adj"])
-        ds_subset_r = self.linear_sum([ds_subset_gradient, ds_subset_gradient], 
-                                      [0.0, -1.0], ["adj", "adj"])
+        norm_gradient_hat = self.l2_inner_product([ds_subset_gradient_hat, ds_subset_gradient_hat], ["adj", "adj"])**0.5
+
+        ds_subset_p_hat = self.linear_sum([ds_subset_gradient_hat, ds_subset_gradient_hat], 
+                                          [0.0, 0.0], ["adj", "adj"])
+        ds_subset_r_hat = self.linear_sum([ds_subset_gradient_hat, ds_subset_gradient_hat], 
+                                          [0.0, -1.0], ["adj", "adj"])
         
-        ds_subset_v = self.linear_sum([ds_subset_gradient, ds_subset_gradient], 
-                                      [0.0, -1.0], ["adj", "adj"])
-        ds_subset_v = self.exch_tlm_adj_nc(ds_subset_v, og_type = "adj")
+        ds_subset_v_hat = self.linear_sum([ds_subset_gradient_hat, ds_subset_gradient_hat], 
+                                          [0.0, -1.0], ["adj", "adj"])
+        ds_subset_v_hat = self.exch_tlm_adj_nc(ds_subset_v_hat, og_type = "adj")
 
         iters = 0
 
@@ -611,68 +855,68 @@ class DataAssimilation:
             iters = iters + 1
             print(f"CG iter {iters}")
 
-            ds_subset_Hv = self.eval_misfit_hessian_action()
+            ds_subset_H_hat_v_hat = self.eval_prior_preconditioned_hessian_action()
 
-            vTHv = self.l2_inner_product([ds_subset_v, ds_subset_Hv], ["tlm", "adj"])
-            norm_r_old = self.l2_inner_product([ds_subset_r, ds_subset_r], ["adj", "adj"])**0.5
+            v_hatT_H_hat_v_hat = self.l2_inner_product([ds_subset_v_hat, ds_subset_H_hat_v_hat], ["tlm", "adj"])
+            norm_r_hat_old = self.l2_inner_product([ds_subset_r_hat, ds_subset_r_hat], ["adj", "adj"])**0.5
 
-            if vTHv < 0:
+            if v_hatT_H_hat_v_hat < 0:
 
                 print("conjugate_gradient: Hessian no longer positive definite!")
 
-                pTg = self.l2_inner_product([ds_subset_p, ds_subset_gradient], ["adj", "adj"])
-                norm_p = self.l2_inner_product([ds_subset_p, ds_subset_p], ["adj", "adj"])**0.5
-                cos = pTg / (norm_p * norm_gradient)
+                p_hatT_g_hat = self.l2_inner_product([ds_subset_p_hat, ds_subset_gradient_hat], ["adj", "adj"])
+                norm_p_hat = self.l2_inner_product([ds_subset_p_hat, ds_subset_p_hat], ["adj", "adj"])**0.5
+                cos = p_hatT_g_hat / (norm_p_hat * norm_gradient_hat)
                 angle = np.degrees(np.arccos(np.clip(cos, -1, 1)))
 
-                print("Angle between p and g in degrees: ", angle)
+                print("Angle between p_hat and g_hat in degrees: ", angle)
 
-                return ds_subset_p
+                return ds_subset_p_hat
 
-            alpha = norm_r_old**2 / vTHv
+            alpha_hat = norm_r_hat_old**2 / v_hatT_H_hat_v_hat
 
-            ds_subset_p = self.linear_sum([ds_subset_p, ds_subset_v],
-                                          [1.0, alpha], ["adj", "tlm"])
+            ds_subset_p_hat = self.linear_sum([ds_subset_p_hat, ds_subset_v_hat],
+                                              [1.0, alpha_hat], ["adj", "tlm"])
 
-            ds_subset_r = self.linear_sum([ds_subset_p, ds_subset_Hv],
-                                          [1.0, -alpha], ["adj", "adj"])
+            ds_subset_r_hat = self.linear_sum([ds_subset_p_hat, ds_subset_H_hat_v_hat],
+                                              [1.0, -alpha_hat], ["adj", "adj"])
 
-            norm_r = self.l2_inner_product([ds_subset_r, ds_subset_r], ["adj", "adj"])**0.5
+            norm_r_hat = self.l2_inner_product([ds_subset_r_hat, ds_subset_r_hat], ["adj", "adj"])**0.5
 
             if tolerance_type == "linear":
-                eps_TOL = 0.5*norm_gradient
+                eps_hat_TOL = 0.5*norm_gradient_hat
             elif tolerance_type == "superlinear":
-                eps_TOL = min(0.5, np.sqrt(norm_gradient))*norm_gradient
+                eps_hat_TOL = min(0.5, np.sqrt(norm_gradient_hat))*norm_gradient_hat
             elif tolerance_type == "quadratic":
-                eps_TOL = min(0.5, norm_gradient)*norm_gradient
+                eps_hat_TOL = min(0.5, norm_gradient)*norm_gradient_hat
             else:
                 raise ValueError("conjugate_gradient: Invalid tolerance_type.")
 
-            if norm_r <= eps_TOL:
+            if norm_r_hat <= eps_hat_TOL:
                 print("conjugate_gradient: Convergence.")
 
-                pTg = self.l2_inner_product([ds_subset_p, ds_subset_gradient], ["adj", "adj"])
-                norm_p = self.l2_inner_product([ds_subset_p, ds_subset_p], ["adj", "adj"])**0.5
-                cos = pTg / (norm_p * norm_gradient)
+                p_hatT_g_hat = self.l2_inner_product([ds_subset_p_hat, ds_subset_gradient_hat], ["adj", "adj"])
+                norm_p_hat = self.l2_inner_product([ds_subset_p_hat, ds_subset_p_hat], ["adj", "adj"])**0.5
+                cos = p_hatT_g_hat / (norm_p_hat * norm_gradient_hat)
                 angle = np.degrees(np.arccos(np.clip(cos, -1, 1)))
 
-                print("Angle between p and g in degrees: ", angle)
+                print("Angle between p_hat and g_hat in degrees: ", angle)
 
-                return ds_subset_p
+                return ds_subset_p_hat
 
-            beta = norm_r**2 / norm_r_old**2
+            beta_hat = norm_r_hat**2 / norm_r_hat_old**2
 
-            ds_subset_v = self.linear_sum([ds_subset_v, ds_subset_r],
-                                          [1.0, beta], ["tlm", "adj"])
+            ds_subset_v_hat = self.linear_sum([ds_subset_v_hat, ds_subset_r_hat],
+                                              [1.0, beta_hat], ["tlm", "adj"])
             
             dict_tlm_action_only_fields_vals = {}
-            for var in ds_subset_v:
+            for var in ds_subset_v_hat:
                 if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
-                    dict_tlm_action_only_fields_vals[var] = ds_subset_v[var].data[0].copy()
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_v_hat[var].data[0].copy()
                 else:
-                    dict_tlm_action_only_fields_vals[var] = ds_subset_v[var].data.copy()
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_v_hat[var].data.copy()
 
-            ds_subset_v = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
+            ds_subset_v_hat = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
 
     @beartype
     def inexact_gn_hessian_cg(self,
@@ -682,7 +926,9 @@ class DataAssimilation:
                               init_alpha_gd: float = 1.0,
                               min_alpha_gd_tol: float = 1.e-10,
                               cg_tolerance_type: str = "superlinear",
-                              c1: float = 1.e-4) -> Any:
+                              c1: float = 1.e-4,
+                              MAX_ITERS_SOR: int = 100, 
+                              OMEGA_SOR: float = 1.5) -> Any:
 
         ds_inp = self.create_ad_nodiff_or_adj_input_nc(dict_fields_vals = self.dict_og_params_fields_vals,
                                                        dict_fields_num_dims = self.dict_params_fields_num_dims,
@@ -701,7 +947,14 @@ class DataAssimilation:
 
             ds_subset_params = self.eval_params()
             ds_subset_gradient = self.eval_gradient()
-            ds_subset_descent_dir = self.conjugate_gradient(cg_tolerance_type)
+            ds_subset_descent_dir_hat = self.conjugate_gradient(cg_tolerance_type)
+
+            ds_out = xr.merge([ds_subset_params, ds_subset_descent_dir_hat])
+            # Some weird permission denied error if this file is not removed first.
+            self.remove_dir(self.dict_ad_out_nc_files["adj"])
+            ds_out.to_netcdf(self.dict_ad_out_nc_files["adj"])
+            ds_subset_descent_dir = self.eval_sqrt_prior_cov_action("adj")
+
 
             alpha, fc_new = self.line_search(ds_subset_params,
                                              ds_subset_gradient,
