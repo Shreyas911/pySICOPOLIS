@@ -609,7 +609,7 @@ class DataAssimilation:
 
         ds_inp_tlm = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
 
-        ds_subset_state = self.subset_of_ds(ds_inp_tlm, "type", "nodiff")
+        ds_subset_params = self.subset_of_ds(ds_inp_tlm, "type", "nodiff")
         ds_subset_tlm = self.subset_of_ds(ds_inp_tlm, "type", "tlm")
 
         for var in ds_subset_tlm:
@@ -663,7 +663,7 @@ class DataAssimilation:
             else:
                 raise ValueError("eval_sqrt_prior_cov_inv_action: Issue with var. Prior action only works for scalar, or 2D and 3D fields.")
 
-        ds_out = xr.merge([ds_subset_state, ds_subset_tlm])
+        ds_out = xr.merge([ds_subset_params, ds_subset_tlm])
 
         # Some weird permission denied error if this file is not removed first.
         self.remove_dir(self.dict_ad_inp_nc_files["tlm_action"])
@@ -690,7 +690,7 @@ class DataAssimilation:
             ds_adj_or_adj_action_or_tlm_action = xr.open_dataset(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
             ad_subset_key = "adj"
 
-        ds_subset_state = self.subset_of_ds(ds_adj_or_adj_action_or_tlm_action, "type", "nodiff")
+        ds_subset_params = self.subset_of_ds(ds_adj_or_adj_action_or_tlm_action, "type", "nodiff")
         ds_subset_adj_or_adj_action_or_tlm_action = self.subset_of_ds(ds_adj_or_adj_action_or_tlm_action, "type", ad_subset_key)
 
         for var in ds_subset_adj_or_adj_action_or_tlm_action:
@@ -767,7 +767,7 @@ class DataAssimilation:
             else:
                 raise ValueError("eval_sqrt_prior_cov_action: Issue with var. Prior action only works for scalar, or 2D and 3D fields.")
 
-        ds_out = xr.merge([ds_subset_state, ds_subset_adj_or_adj_action_or_tlm_action])
+        ds_out = xr.merge([ds_subset_params, ds_subset_adj_or_adj_action_or_tlm_action])
 
         if ad_key_adj_or_adj_action_or_tlm_action == "tlm_action":
             # Some weird permission denied error if this file is not removed first.
@@ -797,7 +797,7 @@ class DataAssimilation:
         ds_misfit_hessian_action = self.eval_prior_preconditioned_misfit_hessian_action()
 
         ds_out_adj_action = xr.open_dataset(self.dict_ad_out_nc_files["adj_action"])
-        ds_subset_state = self.subset_of_ds(ds_out_adj_action, "type", "nodiff")
+        ds_subset_params = self.subset_of_ds(ds_out_adj_action, "type", "nodiff")
         ds_subset_adj_action = self.subset_of_ds(ds_out_adj_action, "type", "adj")
 
         for var in ds_subset_adj_action:
@@ -805,7 +805,7 @@ class DataAssimilation:
             basic_str = var[:-1] 
             ds_subset_adj_action[var].data = ds_subset_adj_action[var].data + self.dict_prior_alphas[basic_str]*ds_subset_tlm[basic_str + "d"]
 
-        ds_out = xr.merge([ds_subset_state, ds_subset_adj_action])
+        ds_out = xr.merge([ds_subset_params, ds_subset_adj_action])
             
         # Some weird permission denied error if this file is not removed first.
         self.remove_dir(self.dict_ad_out_nc_files["adj_action"])
@@ -990,11 +990,19 @@ class DataAssimilation:
         return self.eval_params()
 
     @beartype
-    def revd(self, 
+    def revd(self,
              sampling_param_k_REVD: int, 
-             oversampling_param_p_REVD: int = 10) -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"]]:
+             oversampling_param_p_REVD: int = 10,
+             mode: str = "misfit_prior_precond") -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"]]:
 
-        def flattened_vector(ds_subset: Any, type_vars: str):
+        if mode not in ["misfit_prior_precond", "full_prior_precond"]:
+            raise ValueError("revd: Can only decompose full prior-preconditioned Hessian or misfit prior-preconditioned Hessian.")
+        elif mode == "full_prior_precond":
+            func_hessian_action = self.eval_prior_preconditioned_hessian_action
+        elif mode == "misfit_prior_precond":
+            func_hessian_action = self.eval_prior_preconditioned_misfit_hessian_action
+
+        def flattened_vector(ds_subset: Any, type_vars: str) -> Tuple[float, Float[np.ndarray, "dim_m"]]:
             m = sum(np.prod(var.shape) for var in ds_subset.data_vars.values())
             flattened_vector = ds_subset.to_array().values.ravel()
             assert m == flattened_vector.shape[0]
@@ -1025,7 +1033,7 @@ class DataAssimilation:
             
         ds_omega_tlm_only = self.create_ad_tlm_action_input_nc(bool_randomize = True)
         ds_omega = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
-        ds_subset_state = self.subset_of_ds(ds_omega, "type", "nodiff")
+        ds_subset_params = self.subset_of_ds(ds_omega, "type", "nodiff")
 
         l = sampling_param_k_REVD + oversampling_param_p_REVD
         m, _ = flattened_vector(ds_omega_tlm_only, "tlm")
@@ -1033,7 +1041,7 @@ class DataAssimilation:
         Q = np.empty((0, 0))
 
         while True:
-            ds_subset_y = self.eval_prior_preconditioned_hessian_action()
+            ds_subset_y = func_hessian_action()
             _, y = flattened_vector(ds_subset_y, "adj")
             
             if Q.size > 0:
@@ -1051,31 +1059,96 @@ class DataAssimilation:
 
             ds_omega_tlm_only = self.create_ad_tlm_action_input_nc(bool_randomize = True)
             ds_omega = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
-            ds_subset_state = self.subset_of_ds(ds_omega, "type", "nodiff")
+            ds_subset_params = self.subset_of_ds(ds_omega, "type", "nodiff")
 
         list_ds_AQ_cols = []
 
         for ds_q in list_ds_Q_cols:
 
-            ds_out = xr.merge([ds_subset_state, ds_q])
+            ds_out = xr.merge([ds_subset_params, ds_q])
             # Some weird permission denied error if this file is not removed first.
             self.remove_dir(self.dict_ad_inp_nc_files["tlm_action"])
             ds_out.to_netcdf(self.dict_ad_inp_nc_files["tlm_action"])
 
-            ds_subset_Aq = self.eval_prior_preconditioned_hessian_action()
+            ds_subset_Aq = func_hessian_action()
 
             list_ds_AQ_cols.append(ds_subset_Aq)
 
         T = np.zeros((l, l), dtype = float)
         for i, ds_qi in enumerate(list_ds_Q_cols):
             for j, ds_qj in enumerate(list_ds_AQ_cols):
-
                 T[i, j] = self.l2_inner_product([ds_qi, ds_qj], ["tlm", "adj"])
 
         Lambda, S = np.linalg.eig(T)
         U = Q @ S
 
         return U, Lambda
+
+    @beartype
+    def forward_uq_propagation(self,
+                               sampling_param_k_REVD: int, 
+                               oversampling_param_p_REVD: int = 10) -> Tuple[float, float, float]:
+
+        def flattened_vector(ds_subset: Any, type_vars: str) -> Tuple[float, Float[np.ndarray, "dim_m"]]:
+            m = sum(np.prod(var.shape) for var in ds_subset.data_vars.values())
+            flattened_vector = ds_subset.to_array().values.ravel()
+            assert m == flattened_vector.shape[0]
+
+            return m, flattened_vector
+
+        def construct_ds(flattened_vector: Float[np.ndarray, "dim dim1"], original_ds: Any) -> Any: 
+
+            reconstructed_ds_data = {}
+            start = 0
+            for var_name, var_data in original_ds.data_vars.items():
+
+                shape = var_data.shape
+                size = np.prod(shape)
+                
+                reshaped_data = flattened_vector[start : start + size].reshape(shape)
+                
+                reconstructed_ds_data[var_name] = (var_data.dims, reshaped_data)
+                
+                start += size
+            
+            reconstructed_ds = xr.Dataset(reconstructed_ds_data, coords=original_ds.coords)
+
+            for var in reconstructed_ds:
+                reconstructed_ds[var].attrs["type"] = original_ds[var].attrs["type"]
+           
+            return reconstructed_ds
+ 
+        self.copy_dir(self.src_dir + "/driveradjoint", self.src_dir + "/driveradjoint_orig")
+        self.copy_dir(self.src_dir + "/driveradjointqoi", self.src_dir + "/driveradjointqoi_orig")
+        self.copy_dir(self.src_dir + "/driveradjointqoi", self.src_dir + "/driveradjoint")
+
+        ds_subset_params = self.eval_params()
+        ds_subset_gradient_qoi = self.eval_gradient()
+
+        ds_out = xr.merge([ds_subset_params, ds_subset_gradient_qoi])
+        ds_out.to_netcdf(self.ad_io_dir + "/ad_out_adj_qoi.nc")
+
+        self.copy_dir(self.src_dir + "/driveradjoint_orig", self.src_dir + "/driveradjoint")
+
+        U_misfit, Lambda_misfit = self.revd(sampling_param_k_REVD, 
+                                            oversampling_param_p_REVD,
+                                            mode = "misfit_prior_precond")
+
+        ds_subset_gradient_qoi_type_tlm = self.exch_tlm_adj_nc(ds_subset_gradient_qoi, og_type = "adj")
+        ds_subset_C_gradQoI = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
+        sigma_B_squared = self.l2_inner_product([ds_subset_C_gradQoI, ds_subset_C_gradQoI], ["tlm", "tlm"])
+
+        sigma_P_squared = sigma_B_squared
+        l = sampling_param_k_REVD + oversampling_param_p_REVD
+
+        for i in range(l):
+
+            ds_vi = construct_ds(U_misfit[:, i], ds_subset_C_gradQoI)
+            sigma_P_squared = sigma_P_squared - Lambda_misfit[i] / (Lambda_misfit[i] + 1) * self.l2_inner_product([ds_subset_C_gradQoI, ds_vi], ["tlm", "tlm"])**2
+
+        delta_sigma_qoi_squared = 1 - sigma_P_squared/sigma_B_squared
+
+        return sigma_B_squared, sigma_P_squared, delta_sigma_qoi_squared
 
     @beartype
     def linear_sum(self, list_subset_ds: List[Any], list_alphas: List[float], list_types: List[str]) -> Any:
