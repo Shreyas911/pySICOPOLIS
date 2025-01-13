@@ -990,6 +990,94 @@ class DataAssimilation:
         return self.eval_params()
 
     @beartype
+    def revd(self, 
+             sampling_param_k_REVD: int, 
+             oversampling_param_p_REVD: int = 10) -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"]]:
+
+        def flattened_vector(ds_subset: Any, type_vars: str):
+            m = sum(np.prod(var.shape) for var in ds_subset.data_vars.values())
+            flattened_vector = ds_subset.to_array().values.ravel()
+            assert m == flattened_vector.shape[0]
+
+            return m, flattened_vector
+
+        def construct_ds(flattened_vector: Float[np.ndarray, "dim dim1"], original_ds: Any) -> Any: 
+
+            reconstructed_ds_data = {}
+            start = 0
+            for var_name, var_data in original_ds.data_vars.items():
+
+                shape = var_data.shape
+                size = np.prod(shape)
+                
+                reshaped_data = flattened_vector[start : start + size].reshape(shape)
+                
+                reconstructed_ds_data[var_name] = (var_data.dims, reshaped_data)
+                
+                start += size
+            
+            reconstructed_ds = xr.Dataset(reconstructed_ds_data, coords=original_ds.coords)
+
+            for var in reconstructed_ds:
+                reconstructed_ds[var].attrs["type"] = original_ds[var].attrs["type"]
+           
+            return reconstructed_ds
+            
+        ds_omega_tlm_only = self.create_ad_tlm_action_input_nc(bool_randomize = True)
+        ds_omega = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
+        ds_subset_state = self.subset_of_ds(ds_omega, "type", "nodiff")
+
+        l = sampling_param_k_REVD + oversampling_param_p_REVD
+        m, _ = flattened_vector(ds_omega_tlm_only, "tlm")
+        list_ds_Q_cols = []
+        Q = np.empty((0, 0))
+
+        while True:
+            ds_subset_y = self.eval_prior_preconditioned_hessian_action()
+            _, y = flattened_vector(ds_subset_y, "adj")
+            
+            if Q.size > 0:
+                q_tilde = (np.eye(m) - Q @ Q.T) @ y
+                q = q_tilde / np.linalg.norm(q_tilde)
+                Q = np.hstack([Q, q.reshape(-1, 1)])
+            else:
+                q = y / np.linalg.norm(y)
+                Q = q.reshape(-1, 1)
+
+            list_ds_Q_cols.append(construct_ds(q, ds_omega_tlm_only))
+
+            if Q.shape[1] == l:
+                break
+
+            ds_omega_tlm_only = self.create_ad_tlm_action_input_nc(bool_randomize = True)
+            ds_omega = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
+            ds_subset_state = self.subset_of_ds(ds_omega, "type", "nodiff")
+
+        list_ds_AQ_cols = []
+
+        for ds_q in list_ds_Q_cols:
+
+            ds_out = xr.merge([ds_subset_state, ds_q])
+            # Some weird permission denied error if this file is not removed first.
+            self.remove_dir(self.dict_ad_inp_nc_files["tlm_action"])
+            ds_out.to_netcdf(self.dict_ad_inp_nc_files["tlm_action"])
+
+            ds_subset_Aq = self.eval_prior_preconditioned_hessian_action()
+
+            list_ds_AQ_cols.append(ds_subset_Aq)
+
+        T = np.zeros((l, l), dtype = float)
+        for i, ds_qi in enumerate(list_ds_Q_cols):
+            for j, ds_qj in enumerate(list_ds_AQ_cols):
+
+                T[i, j] = self.l2_inner_product([ds_qi, ds_qj], ["tlm", "adj"])
+
+        Lambda, S = np.linalg.eig(T)
+        U = Q @ S
+
+        return U, Lambda
+
+    @beartype
     def linear_sum(self, list_subset_ds: List[Any], list_alphas: List[float], list_types: List[str]) -> Any:
 
         self.ds_subset_compatibility_check(list_subset_ds, list_types)
