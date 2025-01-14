@@ -440,6 +440,7 @@ class DataAssimilation:
             ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_gradient], 
                                                    [1.0, -alpha], ["nodiff", "adj"])
             _ = self.write_params(ds_subset_params_new)
+            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dict_ad_inp_nc_files["adj"])
 
             print("-------------------------------------")
             print(f"iter {i+1}, fc = {fc_new}")
@@ -982,6 +983,7 @@ class DataAssimilation:
                                                        [1.0, alpha], ["nodiff", "adj"])
 
             _ = self.write_params(ds_subset_params_new)
+            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dict_ad_inp_nc_files["adj"])
 
             print("-------------------------------------")
             print(f"Outer iter {i+1}, fc = {fc_new}")
