@@ -1151,6 +1151,97 @@ class DataAssimilation:
         return sigma_B_squared, sigma_P_squared, delta_sigma_qoi_squared
 
     @beartype
+    def l_bfgs(self,
+               MAX_ITERS: int,
+               num_pairs_lbfgs: int,
+               init_alpha: float = 1.0,
+               min_alpha_tol: float = 1.e-10,
+               c1: float = 1.e-4) -> Any:
+
+        fc_orig = self.eval_cost()
+
+        print("-------------------------------------")
+        print(f"Initial fc = {fc_orig}")
+        print("-------------------------------------")
+
+        m = num_pairs_lbfgs
+
+        list_ds_s = []
+        list_ds_y = []
+
+        ds_subset_params_new = self.eval_params()
+        ds_subset_gradient_new = self.eval_gradient()
+
+        for k in range(MAX_ITERS):
+
+            ds_subset_params_old = ds_subset_params_new.copy()
+            ds_subset_gradient_old = ds_subset_gradient_new.copy()
+
+            ds_subset_q = self.linear_sum([ds_subset_gradient_old, ds_subset_gradient_old], 
+                                              [0.0, -1.0], ["adj", "adj"])
+
+            idx_lower_limit = max(k - m, 0)
+            list_rhos = []
+            list_alphas = []
+            
+            for i in range(k - 1, idx_lower_limit - 1, -1):
+
+                rho = 1 / self.l2_inner_product([list_ds_y[i-idx_lower_limit], list_ds_s[i-idx_lower_limit]], ["adj", "nodiff"])
+                list_rhos = [rho] + list_rhos
+
+                alpha = rho * self.l2_inner_product([list_ds_s[i-idx_lower_limit], ds_subset_q], ["nodiff", "adj"])
+                list_alphas = [alpha] + list_alphas
+
+                ds_subset_q = self.linear_sum([ds_subset_q, list_ds_y[i-idx_lower_limit]], [1.0, -alpha], ["adj", "adj"])
+
+            if list_ds_s and list_ds_y:
+                gamma_k = self.l2_inner_product([list_ds_y[0], list_ds_s[0]], ["adj", "nodiff"]) / self.l2_inner_product([list_ds_y[0], list_ds_y[0]], ["adj", "adj"])
+            else:
+                gamma_k = 1.0
+
+            if gamma_k <= 0:
+                print("l_bfgs: Invalid gamma encountered.")
+
+            ds_subset_p = self.linear_sum([ds_subset_q, ds_subset_q], [0.0, gamma_k], ["adj", "adj"])
+
+            for i in range(idx_lower_limit, k):
+
+                beta = list_rhos[k-i-1] * self.l2_inner_product([list_ds_y[i-idx_lower_limit], ds_subset_p], ["adj", "adj"])
+                ds_subset_p = self.linear_sum([ds_subset_p, list_ds_s[i-idx_lower_limit]], [1.0, list_alphas[k-i-1] - beta], ["adj", "nodiff"])  
+
+            alpha_line_search, fc_new = self.line_search(ds_subset_params_old,
+                                                         ds_subset_gradient_old,
+                                                         ds_subset_p,
+                                                         init_alpha, min_alpha_tol, c1)
+
+            print("-------------------------------------")
+            print(f"Iter {k+1}, fc = {fc_new}")
+            print("-------------------------------------")
+
+            ds_subset_params_new = self.linear_sum([ds_subset_params_old, ds_subset_p], 
+                                                   [1.0, alpha_line_search], ["nodiff", "adj"])
+            _ = self.write_params(ds_subset_params_new)
+            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dict_ad_inp_nc_files["adj"])
+
+            ds_subset_gradient_new = self.eval_gradient()
+
+            ds_s_k = self.linear_sum([ds_subset_params_new, ds_subset_params_old], [1.0, -1.0], ["nodiff", "nodiff"])
+            ds_y_k = self.linear_sum([ds_subset_gradient_new, ds_subset_gradient_old], [1.0, -1.0], ["adj", "adj"])
+
+            if len(list_ds_s) < m and len(list_ds_y) < m and len(list_ds_s) == len(list_ds_y):
+                list_ds_s.append(ds_s_k)
+                list_ds_y.append(ds_y_k)
+            elif len(list_ds_s) == m and len(list_ds_y) == m:
+                list_ds_s.pop(0)
+                list_ds_y.pop(0)
+                list_ds_s.append(ds_s_k)
+                list_ds_y.append(ds_y_k)
+            else:
+                raise ValueError("l_bfgs: Some issue in lists that store the s and y vectors.")
+
+        return self.eval_params()    
+        
+    @beartype
     def linear_sum(self, list_subset_ds: List[Any], list_alphas: List[float], list_types: List[str]) -> Any:
 
         self.ds_subset_compatibility_check(list_subset_ds, list_types)
