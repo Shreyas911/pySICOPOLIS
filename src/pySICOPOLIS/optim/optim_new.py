@@ -35,7 +35,8 @@ class DataAssimilation:
                  dict_prior_deltas: Dict[str, Optional[float]],
                  list_fields_to_ignore: Optional[List[str]] = None,
                  bool_surfvel_cost: bool = False,
-                 filename_vx_vy_s_g: str = None) -> None:
+                 filename_vx_vy_s_g: str = None,
+                 dirpath_store_states: str = None) -> None:
         
         super().__init__()
 
@@ -120,6 +121,7 @@ class DataAssimilation:
 
         self.bool_surfvel_cost = bool_surfvel_cost
         self.filename_vx_vy_s_g = filename_vx_vy_s_g
+        self.dirpath_store_states = dirpath_store_states
 
     @beartype
     def create_ad_nodiff_or_adj_input_nc(self,
@@ -415,6 +417,21 @@ class DataAssimilation:
  
         fc_orig = self.eval_cost()
 
+        if self.dirpath_store_states is not None:
+
+            if not os.path.isdir(self.dirpath_store_states):
+                self.make_dir(self.dirpath_store_states)
+            if os.path.isdir(self.dirpath_store_states + "/" + "gradient_descent"):
+                self.remove_dir(self.dirpath_store_states + "/" + "gradient_descent")
+
+            self.make_dir(self.dirpath_store_states + "/" + "gradient_descent")
+
+            log_file = self.dirpath_store_states + "/gradient_descent/" + "gradient_descent.log"
+            with open(log_file, "a") as f:
+                f.write(f"Iteration 0: Cost = {fc_orig:.6f}\n")
+
+            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + "state_GD_iter_0.nc")
+
         print("-------------------------------------")
         print(f"iter 0, fc = {fc_orig}")
         print("-------------------------------------")
@@ -441,6 +458,13 @@ class DataAssimilation:
                                                    [1.0, -alpha], ["nodiff", "adj"])
             _ = self.write_params(ds_subset_params_new)
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dict_ad_inp_nc_files["adj"])
+
+            if self.dirpath_store_states is not None:
+
+                with open(log_file, "a") as f:
+                    f.write(f"Iteration {i+1}: Cost = {fc_new:.6f}\n")
+
+                self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_{i+1}.nc")
 
             print("-------------------------------------")
             print(f"iter {i+1}, fc = {fc_new}")
@@ -940,6 +964,21 @@ class DataAssimilation:
  
         fc_orig = self.eval_cost()
 
+        if self.dirpath_store_states is not None:
+
+            if not os.path.isdir(self.dirpath_store_states):
+                self.make_dir(self.dirpath_store_states)
+            if os.path.isdir(self.dirpath_store_states + "/" + "inexact_gn_hessian_cg"):
+                self.remove_dir(self.dirpath_store_states + "/" + "inexact_gn_hessian_cg")
+
+            self.make_dir(self.dirpath_store_states + "/" + "inexact_gn_hessian_cg")
+
+            log_file = self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "inexact_gn_hessian_cg.log"
+            with open(log_file, "a") as f:
+                f.write(f"Iteration 0: Cost = {fc_orig:.6f}\n")
+
+            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "state_GNHessCG_iter_0.nc")
+
         print("-------------------------------------")
         print(f"Initial fc = {fc_orig}")
         print("-------------------------------------")
@@ -984,6 +1023,13 @@ class DataAssimilation:
 
             _ = self.write_params(ds_subset_params_new)
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dict_ad_inp_nc_files["adj"])
+
+            if self.dirpath_store_states is not None:
+
+                with open(log_file, "a") as f:
+                    f.write(f"Iteration {i+1}: Cost = {fc_new:.6f}\n")
+
+                self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}.nc")
 
             print("-------------------------------------")
             print(f"Outer iter {i+1}, fc = {fc_new}")
@@ -1162,6 +1208,21 @@ class DataAssimilation:
 
         fc_orig = self.eval_cost()
 
+        if self.dirpath_store_states is not None:
+
+            if not os.path.isdir(self.dirpath_store_states):
+                self.make_dir(self.dirpath_store_states)
+            if os.path.isdir(self.dirpath_store_states + "/" + "l_bfgs"):
+                self.remove_dir(self.dirpath_store_states + "/" + "l_bfgs")
+
+            self.make_dir(self.dirpath_store_states + "/" + "l_bfgs")
+
+            log_file = self.dirpath_store_states + "/l_bfgs/" + "l_bfgs.log"
+            with open(log_file, "a") as f:
+                f.write(f"Iteration 0: Cost = {fc_orig:.6f}\n")
+
+            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + "state_LBFGS_iter_0.nc")
+
         print("-------------------------------------")
         print(f"Initial fc = {fc_orig}")
         print("-------------------------------------")
@@ -1224,6 +1285,13 @@ class DataAssimilation:
                                                    [1.0, alpha_line_search], ["nodiff", "adj"])
             _ = self.write_params(ds_subset_params_new)
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dict_ad_inp_nc_files["adj"])
+
+            if self.dirpath_store_states is not None:
+
+                with open(log_file, "a") as f:
+                    f.write(f"Iteration {k+1}: Cost = {fc_new:.6f}\n")
+
+                self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + f"state_LBFGS_iter_{k+1}.nc")
 
             ds_subset_gradient_new = self.eval_gradient()
 
@@ -1491,6 +1559,16 @@ class DataAssimilation:
     
         subprocess.run(
             f"mv {old_path} {new_path}",
+            shell=True)
+    
+        return None
+
+    @staticmethod
+    @beartype
+    def make_dir(path: str) -> None:
+
+        subprocess.run(
+            f"mkdir {path}",
             shell=True)
     
         return None
