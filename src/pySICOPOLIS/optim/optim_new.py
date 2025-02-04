@@ -35,8 +35,8 @@ class DataAssimilation:
                  dict_prior_deltas: Dict[str, Optional[float]],
                  list_fields_to_ignore: Optional[List[str]] = None,
                  bool_surfvel_cost: bool = False,
-                 filename_vx_vy_s_g: str = None,
-                 dirpath_store_states: str = None) -> None:
+                 filename_vx_vy_s_g: Optional[str] = None,
+                 dirpath_store_states: Optional[str] = None) -> None:
         
         super().__init__()
 
@@ -50,7 +50,7 @@ class DataAssimilation:
 
         @beartype
         def has_exact_keys(d: Dict[str, str], required_keys: List[str]) -> bool:
-            return list(d.keys()) == required_keys
+            return set(d.keys()) == set(required_keys)
         self.ad_keys = ["nodiff", "tlm", "adj", "tlm_action", "adj_action"]
         if (
             not has_exact_keys(dict_sico_out_folder_prefixes, self.ad_keys) or 
@@ -322,7 +322,7 @@ class DataAssimilation:
             elif ds_subset_params[var].attrs["type"] != "nodiff":
                 raise ValueError(f"write_params: Type of {var} is not what is expected i.e. 'nodiff'.")
             elif self.dict_params_fields_or_scalars and self.dict_params_fields_or_scalars[var] == "scalar":
-                dict_params_fields_vals[var] = ds_subset_params[var].data[0].copy()
+                dict_params_fields_vals[var] = ds_subset_params[var].data.flat[0].copy()
             else:
                 dict_params_fields_vals[var] = ds_subset_params[var].data.copy()
 
@@ -489,14 +489,28 @@ class DataAssimilation:
             dict_params_only_fields_vals = {}
 
             for var in ds_subset_params:
+
                 if self.dict_params_fields_or_scalars and self.dict_params_fields_or_scalars[var] == "scalar":
-                    dict_params_only_fields_vals[var] = ds_subset_params[var].data[0].copy()
+                    dict_params_only_fields_vals[var] = ds_subset_params[var].data.flat[0].copy()
                 else:
                     dict_params_only_fields_vals[var] = ds_subset_params[var].data.copy()
 
             if dict_tlm_action_only_fields_vals is not None:
-                pass
+
+                if self.list_fields_to_ignore:
+                    for key in self.list_fields_to_ignore:
+                        if key + "d" in dict_tlm_action_only_fields_vals.keys():
+                            raise ValueError(f"create_ad_tlm_action_input_nc: Don't add ignored field {key} in the dict_tlm_action_only_fields_vals.")
+                        else:
+                            if isinstance(dict_params_only_fields_vals[key], np.ndarray) and not isinstance(dict_params_only_fields_vals[key], (str, bytes)):
+                                dict_tlm_action_only_fields_vals[key + "d"] = np.zeros(dict_params_only_fields_vals[key].shape, dtype=float)
+                            elif isinstance(dict_params_only_fields_vals[key], float):
+                                dict_tlm_action_only_fields_vals[key + "d"] = 0.0
+                            else:
+                                raise ValueError(f"create_ad_tlm_action_input_nc: Somehow you have entered a condition for {key} that's simply impossible.")
+
             elif bool_randomize:
+
                 dict_tlm_action_only_fields_vals = {}
                 for key, value in dict_params_only_fields_vals.items():
                     if self.list_fields_to_ignore and key in self.list_fields_to_ignore and isinstance(value, np.ndarray) and not isinstance(value, (str, bytes)):
@@ -531,8 +545,11 @@ class DataAssimilation:
                                                               dims=["scalar"], attrs=ds_inp_tlm_action[var].attrs)
                     else:
                         raise ValueError(f"create_ad_tlm_action_input_nc: {var} not present in ds_inp_tlm_action!")
-      
-        return self.subset_of_ds(ds_inp_tlm_action, "type", "tlm")
+
+        if self.list_fields_to_ignore:
+            return self.subset_of_ds(ds_inp_tlm_action, "type", "tlm").drop_vars(field + "d" for field in self.list_fields_to_ignore)
+        else:
+            return self.subset_of_ds(ds_inp_tlm_action, "type", "tlm")
 
     @beartype
     def eval_tlm_action(self) -> Any:
@@ -541,7 +558,8 @@ class DataAssimilation:
         ds_subset_tlm_action = self.subset_of_ds(ds_tlm_action, attr_key = "type", attr_value = "tlmhessaction")
 
         list_vars = [var[:-1] for var in ds_subset_tlm_action]
-        if list(self.dict_masks_observables.keys()) != list_vars:
+
+        if set(self.dict_masks_observables.keys()) != set(list_vars):
             raise ValueError("eval_tlm_action: The observables seem to be different than expected.")
 
         return ds_subset_tlm_action
@@ -552,7 +570,7 @@ class DataAssimilation:
         ds_subset_tlm_action = ds_subset_tlm_action.copy()
 
         list_vars = [var[:-1] for var in ds_subset_tlm_action]
-        if list(self.dict_masks_observables.keys()) != list_vars:
+        if set(self.dict_masks_observables.keys()) != set(list_vars):
             raise ValueError("eval_noise_cov_inv_action: The observables seem to be different than expected.")
        
         if not all(value is None for value in self.dict_masks_observables.values()):
@@ -620,8 +638,8 @@ class DataAssimilation:
                         name="vy_s_g_final"
                     )
 
-        ds_inp_adj_action["vx_s_g_final"] = da_vx_s_g_final
-        ds_inp_adj_action["vy_s_g_final"] = da_vy_s_g_final
+            ds_inp_adj_action["vx_s_g_final"] = da_vx_s_g_final
+            ds_inp_adj_action["vy_s_g_final"] = da_vy_s_g_final
 
         # Some weird permission denied error if this file is not removed first.
         self.remove_dir(self.dict_ad_inp_nc_files["adj_action"])
@@ -694,7 +712,16 @@ class DataAssimilation:
         self.remove_dir(self.dict_ad_inp_nc_files["tlm_action"])
         ds_out.to_netcdf(self.dict_ad_inp_nc_files["tlm_action"])
 
-        return ds_subset_tlm
+        dict_tlm_action_only_fields_vals = {}
+        for var in ds_subset_tlm:
+
+            if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+                if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_tlm[var].data.flat[0].copy()
+                else:
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_tlm[var].data.copy()
+
+        return self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
 
     @beartype
     def eval_sqrt_prior_cov_action(self, 
@@ -803,7 +830,43 @@ class DataAssimilation:
             self.remove_dir(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
             ds_out.to_netcdf(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])            
 
-        return ds_subset_adj_or_adj_action_or_tlm_action
+        if ad_key_adj_or_adj_action_or_tlm_action != "tlm_action" and self.dict_params_fields_or_scalars is not None:
+
+            for var in self.dict_params_fields_or_scalars:
+
+                if (not self.list_fields_to_ignore or (self.list_fields_to_ignore and var not in self.list_fields_to_ignore)) and self.dict_params_fields_or_scalars[var] == "scalar":
+
+                    varb = var + "b"
+
+                    if varb in ds_subset_adj_or_adj_action_or_tlm_action:
+                        if ds_subset_adj_or_adj_action_or_tlm_action[varb].attrs["type"] != "adj":
+                            raise ValueError(f"eval_adj_action: A supposedly adjoint variable should have attribute type adj!")
+                        fieldb_sum = np.sum(ds_subset_adj_or_adj_action_or_tlm_action[varb].data)
+                        ds_subset_adj_or_adj_action_or_tlm_action[varb] = xr.DataArray([fieldb_sum], dims=["scalar"], attrs=ds_subset_adj_or_adj_action_or_tlm_action[varb].attrs)
+                    else:
+                        raise ValueError(f"eval_adj_action: {varb} not present in ds_subset_adj_action!")
+
+            if self.list_fields_to_ignore is not None:
+                return ds_subset_adj_or_adj_action_or_tlm_action.drop_vars([field + "b" for field in self.list_fields_to_ignore if field + "b" in ds_subset_adj_or_adj_action_or_tlm_action.variables])
+            else:
+                return ds_subset_adj_or_adj_action_or_tlm_action
+
+        elif ad_key_adj_or_adj_action_or_tlm_action == "tlm_action" and self.dict_params_fields_or_scalars is not None:
+
+            dict_tlm_action_only_fields_vals = {}
+            for var in ds_subset_adj_or_adj_action_or_tlm_action:
+
+                if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+                    if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+                        dict_tlm_action_only_fields_vals[var] = ds_subset_adj_or_adj_action_or_tlm_action[var].data.flat[0].copy()
+                    else:
+                        dict_tlm_action_only_fields_vals[var] = ds_subset_adj_or_adj_action_or_tlm_action[var].data.copy()
+
+            return self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
+
+        else:
+
+            return ds_subset_adj_or_adj_action_or_tlm_action
 
     @beartype
     def eval_prior_preconditioned_misfit_hessian_action(self) -> Any:
@@ -936,10 +999,12 @@ class DataAssimilation:
             
             dict_tlm_action_only_fields_vals = {}
             for var in ds_subset_v_hat:
-                if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
-                    dict_tlm_action_only_fields_vals[var] = ds_subset_v_hat[var].data[0].copy()
-                else:
-                    dict_tlm_action_only_fields_vals[var] = ds_subset_v_hat[var].data.copy()
+
+                if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+                    if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+                        dict_tlm_action_only_fields_vals[var] = ds_subset_v_hat[var].data.flat[0].copy()
+                    else:
+                        dict_tlm_action_only_fields_vals[var] = ds_subset_v_hat[var].data.copy()
 
             ds_subset_v_hat = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
 
@@ -1052,7 +1117,7 @@ class DataAssimilation:
 
         def flattened_vector(ds_subset: Any, type_vars: str) -> Tuple[float, Float[np.ndarray, "dim_m"]]:
             m = sum(np.prod(var.shape) for var in ds_subset.data_vars.values())
-            flattened_vector = ds_subset.to_array().values.ravel()
+            flattened_vector = np.concatenate([var.values.ravel() for var in ds_subset.data_vars.values()])
             assert m == flattened_vector.shape[0]
 
             return m, flattened_vector
@@ -1093,14 +1158,15 @@ class DataAssimilation:
             _, y = flattened_vector(ds_subset_y, "adj")
             
             if Q.size > 0:
-                q_tilde = (np.eye(m) - Q @ Q.T) @ y
+                q_tilde = y - Q @ (Q.T @ y)
                 q = q_tilde / np.linalg.norm(q_tilde)
                 Q = np.hstack([Q, q.reshape(-1, 1)])
             else:
                 q = y / np.linalg.norm(y)
                 Q = q.reshape(-1, 1)
 
-            list_ds_Q_cols.append(construct_ds(q, ds_omega_tlm_only))
+            ds_q = construct_ds(q, ds_omega_tlm_only)
+            list_ds_Q_cols.append(ds_q)
 
             if Q.shape[1] == l:
                 break
@@ -1113,10 +1179,17 @@ class DataAssimilation:
 
         for ds_q in list_ds_Q_cols:
 
-            ds_out = xr.merge([ds_subset_params, ds_q])
-            # Some weird permission denied error if this file is not removed first.
-            self.remove_dir(self.dict_ad_inp_nc_files["tlm_action"])
-            ds_out.to_netcdf(self.dict_ad_inp_nc_files["tlm_action"])
+            dict_tlm_action_only_fields_vals = {}
+            for var in ds_q:
+
+                if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+                    if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+                        dict_tlm_action_only_fields_vals[var] = ds_q[var].data.flat[0].copy()
+                    else:
+                        dict_tlm_action_only_fields_vals[var] = ds_q[var].data.copy()
+
+            _ = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
+            ds_q_fields = self.subset_of_ds(xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"]), "type", "tlm")
 
             ds_subset_Aq = func_hessian_action()
 
@@ -1136,13 +1209,6 @@ class DataAssimilation:
     def forward_uq_propagation(self,
                                sampling_param_k_REVD: int, 
                                oversampling_param_p_REVD: int = 10) -> Tuple[float, float, float]:
-
-        def flattened_vector(ds_subset: Any, type_vars: str) -> Tuple[float, Float[np.ndarray, "dim_m"]]:
-            m = sum(np.prod(var.shape) for var in ds_subset.data_vars.values())
-            flattened_vector = ds_subset.to_array().values.ravel()
-            assert m == flattened_vector.shape[0]
-
-            return m, flattened_vector
 
         def construct_ds(flattened_vector: Float[np.ndarray, "dim dim1"], original_ds: Any) -> Any: 
 
@@ -1397,7 +1463,7 @@ class DataAssimilation:
             elif ds_inp_subset_params[var].attrs["type"] != "nodiff":
                 raise ValueError(f"write_params: Type of {var} is not what is expected i.e. 'nodiff'.")
             elif self.dict_params_fields_or_scalars and self.dict_params_fields_or_scalars[var] == "scalar":
-                dict_fields_vals[var] = ds_inp_subset_params[var].data[0].copy()
+                dict_fields_vals[var] = ds_inp_subset_params[var].data.flat[0].copy()
             else:
                 dict_fields_vals[var] = ds_inp_subset_params[var].data.copy()
 
@@ -1421,7 +1487,7 @@ class DataAssimilation:
 
             for var in ds_inp_subset_tlm_or_adj_action:
                 if dict_fields_or_scalars[var[:-1] + "d"] == "scalar":
-                    dict_fields_vals[var[:-1] + "d"] = ds_inp_subset_tlm_or_adj_action[var].data[0].copy()
+                    dict_fields_vals[var[:-1] + "d"] = ds_inp_subset_tlm_or_adj_action[var].data.flat[0].copy()
                 elif dict_fields_or_scalars[var[:-1] + "d"] == "field":
                     dict_fields_vals[var[:-1] + "d"] = ds_inp_subset_tlm_or_adj_action[var].data.copy()
                 else:
