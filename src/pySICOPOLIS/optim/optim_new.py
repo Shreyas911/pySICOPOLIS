@@ -29,7 +29,7 @@ class DataAssimilation:
                  dict_params_fields_or_scalars: Dict[str, str],
                  dict_masks_observables: Dict[str, Optional[Union[Float[np.ndarray, "dimz dimy dimx"], 
                                                                   Float[np.ndarray, "dimy dimx"]]]],
-                 dict_prior_alphas: Dict[str, float],
+                 prior_alpha: float,
                  dict_prior_sigmas: Dict[str, Optional[float]],
                  dict_prior_gammas: Dict[str, Optional[float]],
                  dict_prior_deltas: Dict[str, Optional[float]],
@@ -103,10 +103,10 @@ class DataAssimilation:
 
         self.dict_masks_observables = dict_masks_observables
 
-        if dict_og_params_fields_vals.keys() != dict_prior_alphas.keys() != dict_prior_sigmas.keys() != dict_prior_gammas.keys() != dict_prior_deltas.keys():
+        if dict_og_params_fields_vals.keys() != dict_prior_sigmas.keys() != dict_prior_gammas.keys() != dict_prior_deltas.keys():
             raise ValueError("DataAssimilation: Inconsistent keys for prior dicts.")
 
-        self.dict_prior_alphas = dict_prior_alphas
+        self.prior_alpha = prior_alpha
         self.dict_prior_sigmas = dict_prior_sigmas
         self.dict_prior_gammas = dict_prior_gammas
         self.dict_prior_deltas = dict_prior_deltas
@@ -891,7 +891,7 @@ class DataAssimilation:
         for var in ds_subset_adj_action:
 
             basic_str = var[:-1] 
-            ds_subset_adj_action[var].data = ds_subset_adj_action[var].data + self.dict_prior_alphas[basic_str]*ds_subset_tlm[basic_str + "d"]
+            ds_subset_adj_action[var].data = ds_subset_adj_action[var].data + self.prior_alpha*ds_subset_tlm[basic_str + "d"]
 
         ds_out = xr.merge([ds_subset_params, ds_subset_adj_action])
             
