@@ -880,42 +880,28 @@ class DataAssimilation:
     def eval_prior_preconditioned_hessian_action(self) -> Any:
 
         ds_inp_tlm_action = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
+        ds_subset_params = self.subset_of_ds(ds_inp_tlm_action, "type", "nodiff")
         ds_subset_tlm = self.subset_of_ds(ds_inp_tlm_action, "type", "tlm")
 
         ds_misfit_hessian_action = self.eval_prior_preconditioned_misfit_hessian_action()
 
-        ds_out_adj_action = xr.open_dataset(self.dict_ad_out_nc_files["adj_action"])
-        ds_subset_params = self.subset_of_ds(ds_out_adj_action, "type", "nodiff")
-        ds_subset_adj_action = self.subset_of_ds(ds_out_adj_action, "type", "adj")
+        for var in ds_misfit_hessian_action:
 
-        for var in ds_subset_adj_action:
+            basic_str = var[:-1]
 
-            basic_str = var[:-1] 
-            ds_subset_adj_action[var].data = ds_subset_adj_action[var].data + self.prior_alpha*ds_subset_tlm[basic_str + "d"]
+            if self.dict_params_fields_or_scalars and self.dict_params_fields_or_scalars[basic_str] == "scalar":
+                ds_misfit_hessian_action[var].data = ds_misfit_hessian_action[var].data + self.prior_alpha*ds_subset_tlm[basic_str + "d"].data.flat[0]
+            else:
+                ds_misfit_hessian_action[var].data = ds_misfit_hessian_action[var].data + self.prior_alpha*ds_subset_tlm[basic_str + "d"].data
 
-        ds_out = xr.merge([ds_subset_params, ds_subset_adj_action])
-            
-        # Some weird permission denied error if this file is not removed first.
-        self.remove_dir(self.dict_ad_out_nc_files["adj_action"])
-        ds_out.to_netcdf(self.dict_ad_out_nc_files["adj_action"])
+        # NO NEED TO WRITE TO FILE AGAIN FOR NOW
+        # AVOIDING THIS BECAUSE SCALAR ADJOINT FIELDS WOULD HAVE TO BE MAPPED BACK TO 2D OR 3D AND IT'S NOT NEEDED FOR NOW
+        #        ds_out = xr.merge([ds_subset_params, ds_misfit_hessian_action])
+        #        # Some weird permission denied error if this file is not removed first
+        #        self.remove_dir(self.dict_ad_out_nc_files["adj_action"])
+        #        ds_out.to_netcdf(self.dict_ad_out_nc_files["adj_action"])
 
-        if self.dict_params_fields_or_scalars is not None:
-
-            for var in self.dict_params_fields_or_scalars:
-    
-                if self.dict_params_fields_or_scalars[var] == "scalar":
-                
-                    varb = var + "b"
-        
-                    if varb in ds_subset_adj_action:
-                        if ds_subset_adj_action[varb].attrs["type"] != "adj":
-                            raise ValueError(f"eval_prior_preconditioned_prior_action: A supposedly adjoint variable should have attribute type adj!")
-                        fieldb_sum = np.sum(ds_subset_adj_action[varb].data)
-                        ds_subset_adj_action[varb] = xr.DataArray([fieldb_sum], dims=["scalar"], attrs=ds_subset_adj_action[varb].attrs)
-                    else:
-                        raise ValueError(f"eval_prior_preconditioned_prior_action: {varb} not present in ds_subset_adj_action!")
-
-        return ds_subset_adj_action
+        return ds_misfit_hessian_action
 
     @beartype
     def conjugate_gradient(self, tolerance_type = "superlinear") -> Any:
@@ -1238,9 +1224,6 @@ class DataAssimilation:
 
         ds_subset_params = self.eval_params()
         ds_subset_gradient_qoi = self.eval_gradient()
-
-        ds_out = xr.merge([ds_subset_params, ds_subset_gradient_qoi])
-        ds_out.to_netcdf(self.ad_io_dir + "/ad_out_adj_qoi.nc")
 
         self.copy_dir(self.src_dir + "/driveradjoint_orig", self.src_dir + "/driveradjoint")
 
