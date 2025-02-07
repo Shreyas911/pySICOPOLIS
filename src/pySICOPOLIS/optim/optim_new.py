@@ -1046,7 +1046,7 @@ class DataAssimilation:
                 q = y / np.linalg.norm(y)
                 Q = q.reshape(-1, 1)
 
-            ds_q = self.construct_ds(q, ds_omega_tlm_only)
+            ds_q = self.construct_ds(q.reshape(-1,), ds_omega_tlm_only)
             list_ds_Q_cols.append(ds_q)
 
             if Q.shape[1] == l:
@@ -1482,7 +1482,7 @@ class DataAssimilation:
 
     @staticmethod
     @beartype
-    def flattened_vector(ds_subset: Any, type_vars: str) -> Tuple[int, Float[np.ndarray, "dim_m"]]:
+    def flattened_vector(ds_subset: Any, type_vars: str) -> Tuple[int | np.integer, Float[np.ndarray, "dim_m"]]:
         m = sum(np.prod(var.shape) for var in ds_subset.data_vars.values())
         flattened_vector = np.concatenate([var.values.ravel() for var in ds_subset.data_vars.values()])
         assert m == flattened_vector.shape[0]
@@ -1491,7 +1491,7 @@ class DataAssimilation:
 
     @staticmethod
     @beartype
-    def construct_ds(flattened_vector: Float[np.ndarray, "dim dim1"], original_ds: Any) -> Any:
+    def construct_ds(flattened_vector: Float[np.ndarray, "dim"], original_ds: Any) -> Any:
 
         reconstructed_ds_data = {}
         start = 0
@@ -1500,7 +1500,7 @@ class DataAssimilation:
             shape = var_data.shape
             size = np.prod(shape)
 
-            reshaped_data = self.flattened_vector[start : start + size].reshape(shape)
+            reshaped_data = flattened_vector[start : start + size].reshape(shape)
 
             reconstructed_ds_data[var_name] = (var_data.dims, reshaped_data)
 
