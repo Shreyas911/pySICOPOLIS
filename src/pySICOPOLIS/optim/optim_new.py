@@ -885,7 +885,7 @@ class DataAssimilation:
             ds_subset_p_hat = self.linear_sum([ds_subset_p_hat, ds_subset_v_hat],
                                               [1.0, alpha_hat], ["adj", "tlm"])
 
-            ds_subset_r_hat = self.linear_sum([ds_subset_p_hat, ds_subset_H_hat_v_hat],
+            ds_subset_r_hat = self.linear_sum([ds_subset_r_hat, ds_subset_H_hat_v_hat],
                                               [1.0, -alpha_hat], ["adj", "adj"])
 
             norm_r_hat = self.l2_inner_product([ds_subset_r_hat, ds_subset_r_hat], ["adj", "adj"])**0.5
