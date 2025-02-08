@@ -895,7 +895,7 @@ class DataAssimilation:
             elif tolerance_type == "superlinear":
                 eps_hat_TOL = min(0.5, np.sqrt(norm_gradient_hat))*norm_gradient_hat
             elif tolerance_type == "quadratic":
-                eps_hat_TOL = min(0.5, norm_gradient)*norm_gradient_hat
+                eps_hat_TOL = min(0.5, norm_gradient_hat)*norm_gradient_hat
             else:
                 raise ValueError("conjugate_gradient: Invalid tolerance_type.")
 
