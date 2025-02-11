@@ -839,7 +839,7 @@ class DataAssimilation:
         return ds_subset_prior_precond_misfit_hess_action
 
     @beartype
-    def conjugate_gradient(self, tolerance_type = "superlinear") -> Any:
+    def conjugate_gradient(self, tolerance_type = "superlinear", MAX_ITERS_CG: Optional[int] = None) -> Any:
 
         ds_subset_gradient = self.eval_gradient()
         ds_subset_gradient_hat = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "adj")
@@ -911,6 +911,18 @@ class DataAssimilation:
 
                 return ds_subset_p_hat
 
+            if MAX_ITERS_CG is not None and iters == MAX_ITERS_CG:
+                print("Maximum CG iterations reached.")
+
+                p_hatT_g_hat = self.l2_inner_product([ds_subset_p_hat, ds_subset_gradient_hat], ["adj", "adj"])
+                norm_p_hat = self.l2_inner_product([ds_subset_p_hat, ds_subset_p_hat], ["adj", "adj"])**0.5
+                cos = p_hatT_g_hat / (norm_p_hat * norm_gradient_hat)
+                angle = np.degrees(np.arccos(np.clip(cos, -1, 1)))
+
+                print("Angle between p_hat and g_hat in degrees: ", angle)
+
+                return ds_subset_p_hat
+
             beta_hat = norm_r_hat**2 / norm_r_hat_old**2
 
             ds_subset_v_hat = self.linear_sum([ds_subset_v_hat, ds_subset_r_hat],
@@ -937,7 +949,8 @@ class DataAssimilation:
                               cg_tolerance_type: str = "superlinear",
                               c1: float = 1.e-4,
                               MAX_ITERS_SOR: int = 100, 
-                              OMEGA_SOR: float = 1.5) -> Any:
+                              OMEGA_SOR: float = 1.5,
+                              MAX_ITERS_CG: Optional[int] = None) -> Any:
 
         if self.dirpath_store_states is not None:
 
@@ -962,7 +975,7 @@ class DataAssimilation:
 
             ds_subset_params = self.ds_subset_params.copy()
             ds_subset_gradient = self.eval_gradient()
-            ds_subset_descent_dir_hat = self.conjugate_gradient(cg_tolerance_type)
+            ds_subset_descent_dir_hat = self.conjugate_gradient(cg_tolerance_type, MAX_ITERS_CG)
 
             ds_out = xr.merge([ds_subset_params, ds_subset_descent_dir_hat])
             # Some weird permission denied error if this file is not removed first.
