@@ -30,6 +30,7 @@ class DataAssimilation:
                  dict_masks_observables: Dict[str, Optional[Union[Float[np.ndarray, "dimz dimy dimx"], 
                                                                   Float[np.ndarray, "dimy dimx"]]]],
                  prior_alpha: float,
+                 prior_delta_z_scaler: float,
                  dict_prior_sigmas: Dict[str, Optional[float]],
                  dict_prior_gammas: Dict[str, Optional[float]],
                  dict_prior_deltas: Dict[str, Optional[float]],
@@ -89,6 +90,7 @@ class DataAssimilation:
         if dict_og_params_fields_vals.keys() != dict_prior_sigmas.keys() != dict_prior_gammas.keys() != dict_prior_deltas.keys():
             raise ValueError("DataAssimilation: Inconsistent keys for prior dicts.")
 
+        self.prior_delta_z_scaler = prior_delta_z_scaler
         self.prior_alpha = prior_alpha
         self.dict_prior_sigmas = dict_prior_sigmas
         self.dict_prior_gammas = dict_prior_gammas
@@ -629,7 +631,7 @@ class DataAssimilation:
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D":
 
                 gamma = self.dict_prior_gammas[basic_str]
-                delta = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
                 delta_x = self.delta_x
                 delta_y = self.delta_y
                 IMAX = self.IMAX
@@ -658,10 +660,27 @@ class DataAssimilation:
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D":
 
-                if not isinstance(self.dict_prior_sigmas[basic_str], np.ndarray) or ds_subset_fields_tlm[var].data.shape != self.dict_prior_sigmas[basic_str].shape:
-                    raise ValueError("eval_sqrt_prior_cov_inv_action: sigma for 3D field should also be a 3D np.ndarray with the correct shape.")
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
+                delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
+                delta_z = delta_z * self.prior_delta_z_scaler
+                KCMAX = self.KCMAX
 
-                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data / self.dict_prior_sigmas[basic_str]
+                field = ds_subset_fields_tlm[var].data.copy()
+                field_new = delta*field.copy()
+
+                field_new[0] = field_new[0] - gamma*(field[1]-field[0])/delta_z[0]**2
+                field_new[KCMAX] = field_new[KCMAX] - gamma*(field[KCMAX-1]-field[KCMAX])/delta_z[KCMAX-1]**2
+
+                for kc in range(1, KCMAX):
+                    field_new[kc] = field_new[kc] - gamma*((field[kc+1] - field[kc])/delta_z[kc] - (field[kc] - field[kc-1])/delta_z[kc-1])*(2.0/(delta_z[kc]+delta_z[kc-1]))
+
+                ds_subset_fields_tlm[var].data = field_new.copy()
+
+                #                if not isinstance(self.dict_prior_sigmas[basic_str], np.ndarray) or ds_subset_fields_tlm[var].data.shape != self.dict_prior_sigmas[basic_str].shape:
+                #                    raise ValueError("eval_sqrt_prior_cov_inv_action: sigma for 3D field should also be a 3D np.ndarray with the correct shape.")
+                #
+                #                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data / self.dict_prior_sigmas[basic_str]
 
             else:
                 raise ValueError("eval_sqrt_prior_cov_inv_action: Issue with var. Prior action only works for scalar, or 2D and 3D fields.")
@@ -703,17 +722,17 @@ class DataAssimilation:
 
             basic_str = var[:-1]
 
-            if self.dict_params_fields_or_scalars[basic_str] == "scalar" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and var not in self.list_fields_to_ignore)):
+            if self.dict_params_fields_or_scalars[basic_str] == "scalar" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
                 if not isinstance(self.dict_prior_sigmas[basic_str], float):
                     raise ValueError("eval_sqrt_prior_cov_action: sigma for scalar field should also be scalar.")
 
                 ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str]
 
-            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and var not in self.list_fields_to_ignore)):
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
                 gamma = self.dict_prior_gammas[basic_str]
-                delta = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
                 delta_x = self.delta_x
                 delta_y = self.delta_y
                 IMAX = self.IMAX
@@ -763,12 +782,43 @@ class DataAssimilation:
 
                 ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
 
-            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and var not in self.list_fields_to_ignore)):
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
-                if not isinstance(self.dict_prior_sigmas[basic_str], np.ndarray) or ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.shape != self.dict_prior_sigmas[basic_str].shape:
-                    raise ValueError("eval_sqrt_prior_cov_action: sigma for 3D field should also be a 3D np.ndarray with the correct shape.")
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
+                delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
+                delta_z = delta_z * self.prior_delta_z_scaler
+                KCMAX = self.KCMAX
 
-                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str]
+                field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+
+                result_old = np.copy(field)
+                result = np.copy(field)
+
+                for _ in range(MAX_ITERS_SOR):
+
+                    for kc in range(KCMAX+1):
+
+                        if kc == 0:
+                            diagonal = delta + gamma / delta_z[0]**2
+                            bracket = field[0] + gamma * result_old[1] / delta_z[0]**2
+                        elif kc == KCMAX:
+                            diagonal = delta + gamma / delta_z[KCMAX-1]**2
+                            bracket = field[KCMAX] + gamma * result[KCMAX-1] / delta_z[KCMAX-1]**2
+                        else:
+                            diagonal = delta + 2 * gamma / (delta_z[kc]*delta_z[kc-1])
+                            bracket = field[kc] + gamma*(result[kc-1] / delta_z[kc-1] + result_old[kc+1] / delta_z[kc])*(2.0/(delta_z[kc]+delta_z[kc-1]))
+
+                        result[kc] = (1 - OMEGA_SOR) * result_old[kc] + OMEGA_SOR / diagonal * bracket
+
+                    result_old = result.copy()
+
+                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+
+                #                if not isinstance(self.dict_prior_sigmas[basic_str], np.ndarray) or ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.shape != self.dict_prior_sigmas[basic_str].shape:
+                #                    raise ValueError("eval_sqrt_prior_cov_action: sigma for 3D field should also be a 3D np.ndarray with the correct shape.")
+                #
+                #                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str]
 
         ds_fields = xr.merge([ds_subset_fields_params, ds_subset_fields_adj_or_adj_action_or_tlm_action])
 
