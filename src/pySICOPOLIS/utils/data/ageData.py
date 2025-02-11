@@ -151,7 +151,7 @@ def correctAgeDataset(ds_age: Dataset,
         safe_age = (age > 0) & (age_uncert_clean > 0)
         ratio = np.zeros_like(age, dtype=float)
         ratio[safe_age] = age_uncert_clean[safe_age] / age[safe_age]
-        age_uncert_clean[(safe_age) & (ratio <= 0.1)] = 0.1 * age[(safe_age) & (ratio <= 0.1)]
+        age_uncert_clean[(safe_age) & (ratio <= 0.04)] = 0.04 * age[(safe_age) & (ratio <= 0.04)]
 
         # DataArray for age uncertainty
         da_age_uncert = xr.DataArray(
@@ -385,7 +385,9 @@ def interpToModelGrid2D(ds: Dataset,
         File name of nc file
     """
 
-    ds = ds.rename({"thickness": "H", "errbed": "H_uncert"})
+    ds = ds.rename({"thickness": "H", "errbed": "H_uncert", "bed": "zl", "surface": "zs"})
+    ds["zl_uncert"] = ds["H_uncert"].copy()
+    ds["zs_uncert"] = ds["H_uncert"].copy()*0.0 + 5.0
 
     # Interpolate horizontally on to model grid
     ds_model = ds.interp(x=xModel, 
