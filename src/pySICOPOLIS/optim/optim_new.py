@@ -114,7 +114,7 @@ class DataAssimilation:
         _ = self.create_ad_nodiff_or_adj_input_nc(dict_og_params_fields_vals, dict_params_fields_num_dims,
                                                   dict_params_coords, dict_params_attrs_type, dict_params_fields_or_scalars,
                                                   "adj")
-        self.fc = self.eval_cost()
+        self.fc, self.fc_data, self.fc_reg = self.eval_cost()
         self.ds_subset_params = self.eval_params()
 
     @beartype
@@ -282,12 +282,14 @@ class DataAssimilation:
         return vx_s_g, vy_s_g
 
     @beartype
-    def eval_cost(self) -> Union[Float[np.ndarray, "dim"], float]:
+    def eval_cost(self) -> Tuple[float, float, float]:
 
         ds_out_fields_nodiff = self.run_exec(ad_key = "nodiff")
         fc = ds_out_fields_nodiff['fc'].data[0]
-    
-        return fc
+        fc_data = ds_out_fields_nodiff['fc_data'].data[0]
+        fc_reg = ds_out_fields_nodiff['fc_reg'].data[0]
+
+        return fc, fc_data, fc_reg
 
     @beartype
     def eval_params(self) -> Any:
@@ -353,11 +355,13 @@ class DataAssimilation:
                     ds_subset_descent_dir: Any,
                     init_alpha: float = 1.0,
                     min_alpha_tol: float = 1.e-10,
-                    c1: float = 1.e-4) -> Tuple[float, float]:
+                    c1: float = 1.e-4) -> Tuple[float, float, float, float]:
     
         alpha = init_alpha
         ds_subset_params_orig = self.ds_subset_params.copy()
         fc = self.fc
+        fc_data = self.fc_data
+        fc_reg = self.fc_reg
 
         while True:
             
@@ -366,7 +370,7 @@ class DataAssimilation:
                                                        [1.0, alpha], ["nodiff", "adj"])
                 self.write_params(ds_subset_params_new)
         
-                fc_new = self.eval_cost()
+                fc_new, fc_data_new, fc_reg_new = self.eval_cost()
                 pTg = self.l2_inner_product([ds_subset_descent_dir, ds_subset_gradient], ["adj", "adj"])
                 ratio = (fc_new - fc)/(alpha*pTg)
 
@@ -378,11 +382,11 @@ class DataAssimilation:
             if alpha <= min_alpha_tol:
                 print(f"Minimum tolerable step size alpha reached.")
                 print(f"Step size alpha = {alpha}")
-                return alpha, fc_new
+                return alpha, fc_new, fc_data_new, fc_reg_new
 
             if ratio >= c1:
                 print(f"Step size alpha = {alpha}")
-                return alpha, fc_new
+                return alpha, fc_new, fc_data_new, fc_reg_new
     
             alpha = alpha/2.0
 
@@ -405,13 +409,13 @@ class DataAssimilation:
 
             log_file = self.dirpath_store_states + "/gradient_descent/" + "gradient_descent.log"
             with open(log_file, "a") as f:
-                f.write(f"Iteration 0: Cost = {self.fc:.6f}\n")
+                f.write(f"Iteration 0: Cost = {self.fc:.6f}, Misfit Cost = {self.fc_data:.6f}, Regularization Cost = {self.fc_reg:.6f}\n")
 
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + "state_GD_iter_0.nc")
 
-        print("-------------------------------------")
-        print(f"iter 0, fc = {self.fc}")
-        print("-------------------------------------")
+        print("---------------------------------------------------------------------------------------------------------------")
+        print(f"iter 0, fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+        print("---------------------------------------------------------------------------------------------------------------")
 
         for i in range(MAX_ITERS):
 
@@ -426,9 +430,9 @@ class DataAssimilation:
             ds_subset_descent_dir = self.linear_sum([ds_subset_gradient, ds_subset_gradient], 
                                                     [0.0, -1.0], ["adj", "adj"])
 
-            alpha, self.fc = self.line_search(ds_subset_gradient,
-                                              ds_subset_descent_dir,
-                                              init_alpha, min_alpha_tol, c1)
+            alpha, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient,
+                                                                         ds_subset_descent_dir,
+                                                                         init_alpha, min_alpha_tol, c1)
 
             ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_gradient], 
                                                    [1.0, -alpha], ["nodiff", "adj"])
@@ -444,9 +448,9 @@ class DataAssimilation:
 
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_{i+1}.nc")
 
-            print("-------------------------------------")
-            print(f"iter {i+1}, fc = {self.fc}")
-            print("-------------------------------------")
+            print("---------------------------------------------------------------------------------------------------------------")
+            print(f"iter {i+1}, fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+            print("---------------------------------------------------------------------------------------------------------------")
 
         return self.ds_subset_params
 
@@ -1017,9 +1021,9 @@ class DataAssimilation:
 
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "state_GNHessCG_iter_0.nc")
 
-        print("-------------------------------------")
-        print(f"Initial fc = {self.fc}")
-        print("-------------------------------------")
+        print("---------------------------------------------------------------------------------------------------------------")
+        print(f"Initial fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+        print("---------------------------------------------------------------------------------------------------------------")
 
         for i in range(MAX_ITERS):
 
@@ -1034,9 +1038,9 @@ class DataAssimilation:
             ds_subset_descent_dir = self.eval_sqrt_prior_cov_action("adj")
 
 
-            alpha, self.fc = self.line_search(ds_subset_gradient,
-                                              ds_subset_descent_dir,
-                                              init_alpha_cg, min_alpha_cg_tol, c1)
+            alpha, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient,
+                                                                         ds_subset_descent_dir,
+                                                                         init_alpha_cg, min_alpha_cg_tol, c1)
 
             if alpha <= min_alpha_cg_tol:
 
@@ -1045,9 +1049,9 @@ class DataAssimilation:
                 ds_subset_neg_gradient = self.linear_sum([ds_subset_gradient, ds_subset_gradient], 
                                                         [0.0, -1.0], ["adj", "adj"])
 
-                alpha, self.fc = self.line_search(ds_subset_gradient,
-                                                  ds_subset_neg_gradient,
-                                                  init_alpha_gd, min_alpha_gd_tol, c1)
+                alpha, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient,
+                                                                             ds_subset_neg_gradient,
+                                                                             init_alpha_gd, min_alpha_gd_tol, c1)
 
                 ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_neg_gradient], 
                                                        [1.0, alpha], ["nodiff", "adj"])
@@ -1069,9 +1073,9 @@ class DataAssimilation:
 
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}.nc")
 
-            print("-------------------------------------")
-            print(f"Outer iter {i+1}, fc = {self.fc}")
-            print("-------------------------------------")
+            print("---------------------------------------------------------------------------------------------------------------")
+            print(f"Outer iter {i+1}, fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+            print("---------------------------------------------------------------------------------------------------------------")
 
         return self.ds_subset_params
 
@@ -1206,9 +1210,9 @@ class DataAssimilation:
 
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + "state_LBFGS_iter_0.nc")
 
-        print("-------------------------------------")
-        print(f"Initial fc = {self.fc}")
-        print("-------------------------------------")
+        print("---------------------------------------------------------------------------------------------------------------")
+        print(f"Initial fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+        print("---------------------------------------------------------------------------------------------------------------")
 
         m = num_pairs_lbfgs
 
@@ -1255,13 +1259,13 @@ class DataAssimilation:
                 beta = list_rhos[k-i-1] * self.l2_inner_product([list_ds_y[i-idx_lower_limit], ds_subset_p], ["adj", "adj"])
                 ds_subset_p = self.linear_sum([ds_subset_p, list_ds_s[i-idx_lower_limit]], [1.0, list_alphas[k-i-1] - beta], ["adj", "nodiff"])  
 
-            alpha_line_search, self.fc = self.line_search(ds_subset_gradient_old,
-                                                          ds_subset_p,
-                                                          init_alpha, min_alpha_tol, c1)
+            alpha_line_search, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient_old,
+                                                                                     ds_subset_p,
+                                                                                     init_alpha, min_alpha_tol, c1)
 
-            print("-------------------------------------")
-            print(f"Iter {k+1}, fc = {self.fc}")
-            print("-------------------------------------")
+            print("---------------------------------------------------------------------------------------------------------------")
+            print(f"Iter {k+1}, fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+            print("---------------------------------------------------------------------------------------------------------------")
 
             ds_subset_params_new = self.linear_sum([ds_subset_params_old, ds_subset_p], 
                                                    [1.0, alpha_line_search], ["nodiff", "adj"])
