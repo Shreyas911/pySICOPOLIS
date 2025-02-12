@@ -893,9 +893,11 @@ class DataAssimilation:
         return ds_subset_prior_precond_misfit_hess_action
 
     @beartype
-    def conjugate_gradient(self, tolerance_type = "superlinear", MAX_ITERS_CG: Optional[int] = None) -> Any:
+    def conjugate_gradient(self,
+                           ds_subset_gradient: Any,
+                           tolerance_type: str = "superlinear",
+                           MAX_ITERS_CG: Optional[int] = None) -> Any:
 
-        ds_subset_gradient = self.eval_gradient()
         ds_subset_gradient_hat = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "adj")
 
         norm_gradient_hat = self.l2_inner_product([ds_subset_gradient_hat, ds_subset_gradient_hat], ["adj", "adj"])**0.5
@@ -953,6 +955,7 @@ class DataAssimilation:
             else:
                 raise ValueError("conjugate_gradient: Invalid tolerance_type.")
 
+            print(f"eps_TOL_CG: {eps_hat_TOL}, norm_r_hat: {norm_r_hat}")
             if norm_r_hat <= eps_hat_TOL:
                 print("conjugate_gradient: Convergence.")
 
@@ -1029,7 +1032,7 @@ class DataAssimilation:
 
             ds_subset_params = self.ds_subset_params.copy()
             ds_subset_gradient = self.eval_gradient()
-            ds_subset_descent_dir_hat = self.conjugate_gradient(cg_tolerance_type, MAX_ITERS_CG)
+            ds_subset_descent_dir_hat = self.conjugate_gradient(ds_subset_gradient, cg_tolerance_type, MAX_ITERS_CG)
 
             ds_out = xr.merge([ds_subset_params, ds_subset_descent_dir_hat])
             # Some weird permission denied error if this file is not removed first.
