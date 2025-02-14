@@ -984,7 +984,14 @@ class DataAssimilation:
 
             ds_subset_v_hat = self.linear_sum([ds_subset_v_hat, ds_subset_r_hat],
                                               [1.0, beta_hat], ["tlm", "adj"])
-            
+
+            if iters > 1:
+                norm_v_hat_old = self.l2_inner_product([ds_subset_v_hat_old, ds_subset_v_hat_old], ["tlm", "tlm"])**0.5
+                norm_H_hat_v_hat = self.l2_inner_product([ds_subset_H_hat_v_hat, ds_subset_H_hat_v_hat], ["adj", "adj"])**0.5
+                inner_prod_check_H_orthogonality = self.l2_inner_product([ds_subset_v_hat_old, ds_subset_H_hat_v_hat], ["tlm", "adj"])**0.5
+                print(f"H-orthoganality check = {inner_prod_check_H_orthogonality/(norm_v_hat_old * norm_H_hat_v_hat)}")
+            ds_subset_v_hat_old = ds_subset_v_hat.copy()
+
             dict_tlm_action_only_fields_vals = {}
             for var in ds_subset_v_hat:
 
@@ -1100,13 +1107,13 @@ class DataAssimilation:
         ds_subset_params = self.subset_of_ds(ds_omega, "type", "nodiff")
 
         l = sampling_param_k_REVD + oversampling_param_p_REVD
-        m, _ = self.flattened_vector(ds_omega_tlm_only, "tlm")
+        m, _ = self.flattened_vector(ds_omega_tlm_only)
         list_ds_Q_cols = []
         Q = np.empty((0, 0))
 
         while True:
             ds_subset_y = func_hessian_action()
-            _, y = self.flattened_vector(ds_subset_y, "adj")
+            _, y = self.flattened_vector(ds_subset_y)
             
             if Q.size > 0:
                 q_tilde = y - Q @ (Q.T @ y)
@@ -1552,7 +1559,7 @@ class DataAssimilation:
 
     @staticmethod
     @beartype
-    def flattened_vector(ds_subset: Any, type_vars: str) -> Tuple[int | np.integer, Float[np.ndarray, "dim_m"]]:
+    def flattened_vector(ds_subset: Any) -> Tuple[int | np.integer, Float[np.ndarray, "dim_m"]]:
         m = sum(np.prod(var.shape) for var in ds_subset.data_vars.values())
         flattened_vector = np.concatenate([var.values.ravel() for var in ds_subset.data_vars.values()])
         assert m == flattened_vector.shape[0]
