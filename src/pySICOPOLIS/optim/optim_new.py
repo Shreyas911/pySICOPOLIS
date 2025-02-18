@@ -638,12 +638,12 @@ class DataAssimilation:
                 if not isinstance(self.dict_prior_sigmas[basic_str], float):
                     raise ValueError("eval_sqrt_prior_cov_inv_action: sigma for scalar field should also be scalar.")
 
-                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data / self.dict_prior_sigmas[basic_str]
+                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data / self.dict_prior_sigmas[basic_str] * self.prior_alpha**0.5
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D":
 
-                gamma = self.dict_prior_gammas[basic_str]
-                delta = self.dict_prior_deltas[basic_str]
+                gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
+                delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
                 delta_x = self.delta_x
                 delta_y = self.delta_y
                 IMAX = self.IMAX
@@ -672,8 +672,8 @@ class DataAssimilation:
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D":
 
-                gamma = self.dict_prior_gammas[basic_str]
-                delta = self.dict_prior_deltas[basic_str]
+                gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
+                delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
                 delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
                 delta_z = delta_z * self.prior_delta_z_scaler
                 KCMAX = self.KCMAX
@@ -734,12 +734,12 @@ class DataAssimilation:
                 if not isinstance(self.dict_prior_sigmas[basic_str], float):
                     raise ValueError("eval_sqrt_prior_cov_action: sigma for scalar field should also be scalar.")
 
-                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str]
+                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str] / self.prior_alpha**0.5
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
-                gamma = self.dict_prior_gammas[basic_str]
-                delta = self.dict_prior_deltas[basic_str]
+                gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
+                delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
                 delta_x = self.delta_x
                 delta_y = self.delta_y
                 IMAX = self.IMAX
@@ -791,8 +791,8 @@ class DataAssimilation:
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
-                gamma = self.dict_prior_gammas[basic_str]
-                delta = self.dict_prior_deltas[basic_str]
+                gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
+                delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
                 delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
                 delta_z = delta_z * self.prior_delta_z_scaler
                 KCMAX = self.KCMAX
@@ -888,9 +888,9 @@ class DataAssimilation:
             basic_str = var[:-1]
 
             if self.dict_params_fields_or_scalars and self.dict_params_fields_or_scalars[basic_str] == "scalar":
-                ds_subset_prior_precond_misfit_hess_action[var].data = ds_subset_prior_precond_misfit_hess_action[var].data + self.prior_alpha*ds_subset_tlm[basic_str + "d"].data.flat[0]
+                ds_subset_prior_precond_misfit_hess_action[var].data = ds_subset_prior_precond_misfit_hess_action[var].data + ds_subset_tlm[basic_str + "d"].data.flat[0]
             else:
-                ds_subset_prior_precond_misfit_hess_action[var].data = ds_subset_prior_precond_misfit_hess_action[var].data + self.prior_alpha*ds_subset_tlm[basic_str + "d"].data
+                ds_subset_prior_precond_misfit_hess_action[var].data = ds_subset_prior_precond_misfit_hess_action[var].data + ds_subset_tlm[basic_str + "d"].data
 
         # Note that the final result is not written to any nc file
         return ds_subset_prior_precond_misfit_hess_action
