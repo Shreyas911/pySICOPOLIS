@@ -34,6 +34,8 @@ class DataAssimilation:
                  dict_prior_sigmas: Dict[str, Optional[float]],
                  dict_prior_gammas: Dict[str, Optional[float]],
                  dict_prior_deltas: Dict[str, Optional[float]],
+                 MAX_ITERS_SOR: int = 100,
+                 OMEGA_SOR: float = 1.5,
                  list_fields_to_ignore: Optional[List[str]] = None,
                  bool_surfvel_cost: bool = False,
                  filename_vx_vy_s_g: Optional[str] = None,
@@ -95,6 +97,12 @@ class DataAssimilation:
         self.dict_prior_sigmas = dict_prior_sigmas
         self.dict_prior_gammas = dict_prior_gammas
         self.dict_prior_deltas = dict_prior_deltas
+
+        if not (1.0 <= OMEGA_SOR <= 2.0):
+            raise ValueError("DataAssimilation: Relaxation factor for SOR solver should be between 1 and 2.")
+
+        self.MAX_ITERS_SOR = MAX_ITERS_SOR
+        self.OMEGA_SOR = OMEGA_SOR
 
         self.list_fields_to_ignore = list_fields_to_ignore
 
@@ -702,12 +710,7 @@ class DataAssimilation:
 
     @beartype
     def eval_sqrt_prior_cov_action(self, 
-                                   ad_key_adj_or_adj_action_or_tlm_action: str, 
-                                   MAX_ITERS_SOR: int = 100, 
-                                   OMEGA_SOR: float = 1.5) -> Any:
-
-        if not (1.0 <= OMEGA_SOR <= 2.0):
-            raise ValueError("eval_sqrt_prior_cov_action: Relaxation factor for SOR solver should be between 1 and 2.")
+                                   ad_key_adj_or_adj_action_or_tlm_action: str) -> Any:
 
         if ad_key_adj_or_adj_action_or_tlm_action not in ["tlm_action", "adj", "adj_action"]:
             raise ValueError("eval_sqrt_prior_cov_inv_action: Can only act on tlm or adj or adj_action quantities.")
@@ -747,7 +750,7 @@ class DataAssimilation:
                 result_old = np.copy(field)
                 result = np.copy(field)
 
-                for _ in range(MAX_ITERS_SOR):
+                for _ in range(self.MAX_ITERS_SOR):
 
                     for j in range(JMAX+1):
                         for i in range(IMAX+1):
@@ -780,7 +783,7 @@ class DataAssimilation:
                                 diagonal = delta + 2*gamma*(1/delta_x**2 + 1/delta_y**2)
                                 bracket = field[j, i] + gamma*((result[j-1, i] + result_old[j+1, i]) / delta_y**2 + (result[j, i-1] + result_old[j, i+1]) / delta_x**2)
 
-                            result[j, i] = (1 - OMEGA_SOR) * result_old[j, i] + OMEGA_SOR / diagonal * bracket
+                            result[j, i] = (1 - self.OMEGA_SOR) * result_old[j, i] + self.OMEGA_SOR / diagonal * bracket
 
                     result_old = result.copy()
 
@@ -799,7 +802,7 @@ class DataAssimilation:
                 result_old = np.copy(field)
                 result = np.copy(field)
 
-                for _ in range(MAX_ITERS_SOR):
+                for _ in range(self.MAX_ITERS_SOR):
 
                     for kc in range(KCMAX+1):
 
@@ -813,7 +816,7 @@ class DataAssimilation:
                             diagonal = delta + 2 * gamma / (delta_z[kc]*delta_z[kc-1])
                             bracket = field[kc] + gamma*(result[kc-1] / delta_z[kc-1] + result_old[kc+1] / delta_z[kc])*(2.0/(delta_z[kc]+delta_z[kc-1]))
 
-                        result[kc] = (1 - OMEGA_SOR) * result_old[kc] + OMEGA_SOR / diagonal * bracket
+                        result[kc] = (1 - self.OMEGA_SOR) * result_old[kc] + self.OMEGA_SOR / diagonal * bracket
 
                     result_old = result.copy()
 
@@ -1012,8 +1015,6 @@ class DataAssimilation:
                               min_alpha_gd_tol: float = 1.e-10,
                               cg_tolerance_type: str = "superlinear",
                               c1: float = 1.e-4,
-                              MAX_ITERS_SOR: int = 100, 
-                              OMEGA_SOR: float = 1.5,
                               MAX_ITERS_CG: Optional[int] = None) -> Any:
 
         if self.dirpath_store_states is not None:
