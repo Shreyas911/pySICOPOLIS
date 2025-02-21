@@ -1166,30 +1166,26 @@ class DataAssimilation:
 
     @beartype
     def forward_uq_propagation(self,
-                               sampling_param_k_REVD: int, 
-                               oversampling_param_p_REVD: int = 10) -> Tuple[float, float, float]:
+                               U_misfit: Float[np.ndarray, "dim_m dim_l"],
+                               Lambda_misfit: Float[np.ndarray, "dim_l"]) -> Tuple[float, float, float]:
+
+        assert U_misfit.shape[1] == Lambda_misfit.shape[0]
 
         self.copy_dir(self.src_dir + "/driveradjoint", self.src_dir + "/driveradjoint_orig")
         self.copy_dir(self.src_dir + "/driveradjointqoi", self.src_dir + "/driveradjointqoi_orig")
         self.copy_dir(self.src_dir + "/driveradjointqoi", self.src_dir + "/driveradjoint")
 
-        ds_subset_params = self.eval_params()
         ds_subset_gradient_qoi = self.eval_gradient()
 
         self.copy_dir(self.src_dir + "/driveradjoint_orig", self.src_dir + "/driveradjoint")
-
-        U_misfit, Lambda_misfit = self.revd(sampling_param_k_REVD, 
-                                            oversampling_param_p_REVD,
-                                            mode = "misfit_prior_precond")
 
         ds_subset_gradient_qoi_type_tlm = self.exch_tlm_adj_nc(ds_subset_gradient_qoi, og_type = "adj")
         ds_subset_C_gradQoI = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
         sigma_B_squared = self.l2_inner_product([ds_subset_C_gradQoI, ds_subset_C_gradQoI], ["tlm", "tlm"])
 
         sigma_P_squared = sigma_B_squared
-        l = sampling_param_k_REVD + oversampling_param_p_REVD
 
-        for i in range(l):
+        for i in range(Lambda_misfit.shape[0]):
 
             ds_vi = self.construct_ds(U_misfit[:, i], ds_subset_C_gradQoI)
             sigma_P_squared = sigma_P_squared - Lambda_misfit[i] / (Lambda_misfit[i] + 1) * self.l2_inner_product([ds_subset_C_gradQoI, ds_vi], ["tlm", "tlm"])**2
