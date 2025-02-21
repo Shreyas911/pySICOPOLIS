@@ -1195,6 +1195,196 @@ class DataAssimilation:
         return sigma_B_squared, sigma_P_squared, delta_sigma_qoi_squared
 
     @beartype
+    def sample_prior(self) -> Any:
+
+        ds_x = self.create_ad_tlm_action_input_nc(bool_randomize = True)
+        ds_Cx = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
+
+        return ds_Cx
+
+    @beartype
+    def sample_posterior(self,
+                         U_misfit: Float[np.ndarray, "dim_m dim_l"],
+                         Lambda_misfit: Float[np.ndarray, "dim_l"]) -> Any:
+
+        assert U_misfit.shape[1] == Lambda_misfit.shape[0]
+
+        ds_x = self.create_ad_tlm_action_input_nc(bool_randomize = True)
+        ds_Cx = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
+
+        ds_vi = self.construct_ds(U_misfit[:, 0], ds_x)
+
+        factor = self.l2_inner_product([ds_vi, ds_x], ["tlm", "tlm"])
+        factor = factor * (1 - 1/(1 + Lambda_misfit[0])**0.5)
+
+        ds_V_S_VT = self.linear_sum([ds_vi, ds_vi],
+                                    [factor, 0.0], ["tlm", "tlm"])
+
+        for i in range(1, Lambda_misfit.shape[0]):
+
+           ds_vi = self.construct_ds(U_misfit[:, i], ds_x)
+
+           factor = self.l2_inner_product([ds_vi, ds_x], ["tlm", "tlm"])
+           factor = factor * (1 - 1/(1 + Lambda_misfit[i])**0.5)
+
+           ds_V_S_VT = self.linear_sum([ds_V_S_VT, ds_vi],
+                                       [1.0, factor], ["tlm", "tlm"])
+
+        ds_sample = self.linear_sum([ds_Cx, ds_V_S_VT],
+                                    [1.0, -1.0], ["tlm", "tlm"])
+
+        return ds_sample
+
+    @beartype
+    def pointwise_marginals(self,
+                            type_marginals: str,
+                            N_samples: Optional[int] = None,
+                            U_misfit: Optional[Float[np.ndarray, "dim_m dim_l"]] = None,
+                            Lambda_misfit: Optional[Float[np.ndarray, "dim_l"]] = None) -> Any:
+
+        if type_marginals not in ["prior_analytical", "prior_sampling", "posterior"]:
+            raise ValueError("pointwise_marginals: type_marginals can only be prior_analytical, prior_sampling, or posterior.")
+        elif type_marginals == "posterior" and (U_misfit is None or Lambda_misfit is None):
+            raise ValueError("pointwise_marginals: For posterior sampling, specify U_misfit and Lambda_misfit from REVD.")
+        elif type_marginals in ["prior_sampling", "posterior"] and N_samples is None:
+            raise ValueError("pointwise_marginals: For prior_sampling and posterior, specify N_samples > 0.")
+
+        if N_samples is not None and N_samples <= 0:
+
+            raise ValueError("pointwise_marginals: N_samples has to be postive!")
+
+        elif type_marginals == "prior_analytical":
+
+            sample = self.sample_prior()
+            mean_samples = sample*0.0
+            for var in sample.data_vars:
+                mean_samples[var].attrs = sample[var].attrs
+                mean_samples.attrs = sample.attrs
+
+            std_samples = mean_samples.copy()
+
+            for var in std_samples:
+
+                basic_str = var[:-1]
+
+                if self.dict_params_fields_or_scalars[basic_str] == "scalar":
+
+                    if not isinstance(self.dict_prior_sigmas[basic_str], float):
+                        raise ValueError("pointwise_marginals: sigma for scalar field should also be scalar.")
+
+                    std_samples[var].data = self.dict_prior_sigmas[basic_str] / self.prior_alpha**0.5
+
+                elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D":
+
+                    gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
+                    delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
+                    delta_x = self.delta_x
+                    delta_y = self.delta_y
+                    IMAX = self.IMAX
+                    JMAX = self.JMAX
+
+                    field = std_samples[var].data.copy()
+                    field_new = field.copy()
+
+                    field_new[0, 0] = delta + gamma*(1.0/delta_x**2 + 1.0/delta_y**2)
+                    field_new[JMAX, 0] = delta + gamma*(1.0/delta_x**2 + 1.0/delta_y**2)
+                    field_new[0, IMAX] = delta + gamma*(1.0/delta_x**2 + 1.0/delta_y**2)
+                    field_new[JMAX, IMAX] = delta + gamma*(1.0/delta_x**2 + 1.0/delta_y**2)
+
+                    field_new[1:JMAX, 0] = delta + gamma*(2.0/delta_y**2 + 1.0/delta_x**2)
+                    field_new[1:JMAX, IMAX] = delta + gamma*(2.0/delta_y**2 + 1.0/delta_x**2)
+
+                    field_new[0, 1:IMAX] = delta +  gamma*(1.0/delta_y**2 + 2.0/delta_x**2)
+                    field_new[JMAX, 1:IMAX] = delta + gamma*(1.0/delta_y**2 + 2.0/delta_x**2)
+
+                    field_new[1:JMAX, 1:IMAX] = delta + gamma*(2.0/delta_y**2 + 2.0/delta_x**2)
+
+                    std_samples[var].data = field_new.copy()**(-1)
+
+                elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D":
+
+                    gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
+                    delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
+                    delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
+                    delta_z = delta_z * self.prior_delta_z_scaler
+                    KCMAX = self.KCMAX
+
+                    field = std_samples[var].data.copy()
+                    field_new = field.copy()
+
+                    field_new[0] = delta + gamma/delta_z[0]**2
+                    field_new[KCMAX] = delta + gamma/delta_z[KCMAX-1]**2
+
+                    for kc in range(1, KCMAX):
+                        field_new[kc] = delta + gamma*(2.0/(delta_z[kc]*delta_z[kc-1]))
+
+                    std_samples[var].data = field_new.copy()**(-1)
+
+                else:
+                    raise ValueError("eval_sqrt_prior_cov_inv_action: Issue with var. Prior action only works for scalar, or 2D and 3D fields.")
+
+            return mean_samples, std_samples
+
+        elif N_samples == 1:
+
+            if type_marginals == "prior_sampling":
+                mean_samples = self.sample_prior()
+            elif type_marginals == "posterior":
+                mean_samples = self.sample_posterior(U_misfit, Lambda_misfit)
+
+            return mean_samples, xr.zeros_like(mean_samples)
+
+        if type_marginals == "prior_sampling":
+            sample = self.sample_prior()
+        elif type_marginals == "posterior":
+            sample = self.sample_posterior(U_misfit, Lambda_misfit)
+
+        mean_samples = sample.copy()
+
+        mean_samples_squared = sample**2
+        for var in sample.data_vars:
+            mean_samples_squared[var].attrs = sample[var].attrs
+        mean_samples_squared.attrs = sample.attrs
+
+        for i in range(N_samples-1):
+
+            if type_marginals == "prior_sampling":
+                sample = self.sample_prior()
+            elif type_marginals == "posterior":
+                sample = self.sample_posterior(U_misfit, Lambda_misfit)
+
+            mean_samples = self.linear_sum([mean_samples, sample],
+                                          [1.0, 1.0], ["tlm", "tlm"])
+
+            sample_squared = sample**2
+            for var in sample.data_vars:
+                sample_squared[var].attrs = sample[var].attrs
+            sample_squared.attrs = sample.attrs
+
+            mean_samples_squared = self.linear_sum([mean_samples_squared, sample_squared],
+                                                  [1.0, 1.0], ["tlm", "tlm"])
+
+        mean_samples = self.linear_sum([mean_samples, mean_samples],
+                                      [1.0/N_samples, 0.0], ["tlm", "tlm"])
+        mean_samples_squared = self.linear_sum([mean_samples_squared, mean_samples_squared],
+                                              [1.0/N_samples, 0.0], ["tlm", "tlm"])
+
+        squared_mean_samples = mean_samples**2
+        for var in sample.data_vars:
+            squared_mean_samples[var].attrs = mean_samples[var].attrs
+        squared_mean_samples.attrs = mean_samples.attrs
+
+        variance_samples = self.linear_sum([mean_samples_squared, squared_mean_samples],
+                                           [1.0, -1.0], ["tlm", "tlm"])
+
+        std_samples = variance_samples**0.5
+        for var in variance_samples.data_vars:
+            std_samples[var].attrs = variance_samples[var].attrs
+        std_samples.attrs = variance_samples.attrs
+
+        return mean_samples, std_samples
+
+    @beartype
     def l_bfgs(self,
                MAX_ITERS: int,
                num_pairs_lbfgs: int,
