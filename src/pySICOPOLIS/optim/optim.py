@@ -1238,103 +1238,29 @@ class DataAssimilation:
     @beartype
     def pointwise_marginals(self,
                             type_marginals: str,
-                            N_samples: Optional[int] = None,
+                            N_samples: int = 10,
                             U_misfit: Optional[Float[np.ndarray, "dim_m dim_l"]] = None,
                             Lambda_misfit: Optional[Float[np.ndarray, "dim_l"]] = None) -> Any:
 
-        if type_marginals not in ["prior_analytical", "prior_sampling", "posterior"]:
-            raise ValueError("pointwise_marginals: type_marginals can only be prior_analytical, prior_sampling, or posterior.")
+        if type_marginals not in ["prior", "posterior"]:
+            raise ValueError("pointwise_marginals: type_marginals can only be prior or posterior.")
         elif type_marginals == "posterior" and (U_misfit is None or Lambda_misfit is None):
             raise ValueError("pointwise_marginals: For posterior sampling, specify U_misfit and Lambda_misfit from REVD.")
-        elif type_marginals in ["prior_sampling", "posterior"] and N_samples is None:
-            raise ValueError("pointwise_marginals: For prior_sampling and posterior, specify N_samples > 0.")
 
-        if N_samples is not None and N_samples <= 0:
+        if N_samples <= 0:
 
             raise ValueError("pointwise_marginals: N_samples has to be postive!")
 
-        elif type_marginals == "prior_analytical":
-
-            sample = self.sample_prior()
-            mean_samples = sample*0.0
-            for var in sample.data_vars:
-                mean_samples[var].attrs = sample[var].attrs
-                mean_samples.attrs = sample.attrs
-
-            std_samples = mean_samples.copy()
-
-            for var in std_samples:
-
-                basic_str = var[:-1]
-
-                if self.dict_params_fields_or_scalars[basic_str] == "scalar":
-
-                    if not isinstance(self.dict_prior_sigmas[basic_str], float):
-                        raise ValueError("pointwise_marginals: sigma for scalar field should also be scalar.")
-
-                    std_samples[var].data = self.dict_prior_sigmas[basic_str] / self.prior_alpha**0.5
-
-                elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D":
-
-                    gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
-                    delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
-                    delta_x = self.delta_x
-                    delta_y = self.delta_y
-                    IMAX = self.IMAX
-                    JMAX = self.JMAX
-
-                    field = std_samples[var].data.copy()
-                    field_new = field.copy()
-
-                    field_new[0, 0] = delta + gamma*(1.0/delta_x**2 + 1.0/delta_y**2)
-                    field_new[JMAX, 0] = delta + gamma*(1.0/delta_x**2 + 1.0/delta_y**2)
-                    field_new[0, IMAX] = delta + gamma*(1.0/delta_x**2 + 1.0/delta_y**2)
-                    field_new[JMAX, IMAX] = delta + gamma*(1.0/delta_x**2 + 1.0/delta_y**2)
-
-                    field_new[1:JMAX, 0] = delta + gamma*(2.0/delta_y**2 + 1.0/delta_x**2)
-                    field_new[1:JMAX, IMAX] = delta + gamma*(2.0/delta_y**2 + 1.0/delta_x**2)
-
-                    field_new[0, 1:IMAX] = delta +  gamma*(1.0/delta_y**2 + 2.0/delta_x**2)
-                    field_new[JMAX, 1:IMAX] = delta + gamma*(1.0/delta_y**2 + 2.0/delta_x**2)
-
-                    field_new[1:JMAX, 1:IMAX] = delta + gamma*(2.0/delta_y**2 + 2.0/delta_x**2)
-
-                    std_samples[var].data = field_new.copy()**(-1)
-
-                elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D":
-
-                    gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
-                    delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
-                    delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
-                    delta_z = delta_z * self.prior_delta_z_scaler
-                    KCMAX = self.KCMAX
-
-                    field = std_samples[var].data.copy()
-                    field_new = field.copy()
-
-                    field_new[0] = delta + gamma/delta_z[0]**2
-                    field_new[KCMAX] = delta + gamma/delta_z[KCMAX-1]**2
-
-                    for kc in range(1, KCMAX):
-                        field_new[kc] = delta + gamma*(2.0/(delta_z[kc]*delta_z[kc-1]))
-
-                    std_samples[var].data = field_new.copy()**(-1)
-
-                else:
-                    raise ValueError("eval_sqrt_prior_cov_inv_action: Issue with var. Prior action only works for scalar, or 2D and 3D fields.")
-
-            return mean_samples, std_samples
-
         elif N_samples == 1:
 
-            if type_marginals == "prior_sampling":
+            if type_marginals == "prior":
                 mean_samples = self.sample_prior()
             elif type_marginals == "posterior":
                 mean_samples = self.sample_posterior(U_misfit, Lambda_misfit)
 
             return mean_samples, xr.zeros_like(mean_samples)
 
-        if type_marginals == "prior_sampling":
+        if type_marginals == "prior":
             sample = self.sample_prior()
         elif type_marginals == "posterior":
             sample = self.sample_posterior(U_misfit, Lambda_misfit)
@@ -1348,7 +1274,7 @@ class DataAssimilation:
 
         for i in range(N_samples-1):
 
-            if type_marginals == "prior_sampling":
+            if type_marginals == "prior":
                 sample = self.sample_prior()
             elif type_marginals == "posterior":
                 sample = self.sample_posterior(U_misfit, Lambda_misfit)
