@@ -29,7 +29,6 @@ class DataAssimilation:
                  dict_params_fields_or_scalars: Dict[str, str],
                  dict_masks_observables: Dict[str, Optional[Union[Float[np.ndarray, "dimz dimy dimx"], 
                                                                   Float[np.ndarray, "dimy dimx"]]]],
-                 prior_alpha: float,
                  prior_delta_z_scaler: float,
                  dict_prior_sigmas: Dict[str, Optional[float]],
                  dict_prior_gammas: Dict[str, Optional[float]],
@@ -39,7 +38,9 @@ class DataAssimilation:
                  list_fields_to_ignore: Optional[List[str]] = None,
                  bool_surfvel_cost: bool = False,
                  filename_vx_vy_s_g: Optional[str] = None,
-                 dirpath_store_states: Optional[str] = None) -> None:
+                 dirpath_store_states: Optional[str] = None,
+                 num_prior_samples: Optional[int] = 1000,
+                 prior_X: Optional[Any] = None) -> None:
 
         super().__init__()
 
@@ -92,8 +93,10 @@ class DataAssimilation:
         if dict_og_params_fields_vals.keys() != dict_prior_sigmas.keys() != dict_prior_gammas.keys() != dict_prior_deltas.keys():
             raise ValueError("DataAssimilation: Inconsistent keys for prior dicts.")
 
+        if not all(isinstance(value, float) for value in dict_prior_sigmas.values()):
+            raise ValueError("DataAssimilation: All sigma values should be floats.")
+
         self.prior_delta_z_scaler = prior_delta_z_scaler
-        self.prior_alpha = prior_alpha
         self.dict_prior_sigmas = dict_prior_sigmas
         self.dict_prior_gammas = dict_prior_gammas
         self.dict_prior_deltas = dict_prior_deltas
@@ -116,14 +119,86 @@ class DataAssimilation:
         self.filename_vx_vy_s_g = filename_vx_vy_s_g
         self.dirpath_store_states = dirpath_store_states
 
+        self.ds_subset_params = self.create_ad_nodiff_or_adj_input_nc(dict_og_params_fields_vals, dict_params_fields_num_dims,
+                                                  dict_params_coords, dict_params_attrs_type, dict_params_fields_or_scalars,
+                                                  "nodiff", None)
         _ = self.create_ad_nodiff_or_adj_input_nc(dict_og_params_fields_vals, dict_params_fields_num_dims,
                                                   dict_params_coords, dict_params_attrs_type, dict_params_fields_or_scalars,
-                                                  "nodiff")
+                                                  "adj", None)
+
+        for var in self.dict_params_fields_or_scalars:
+
+            if self.dict_params_fields_or_scalars and self.dict_params_fields_or_scalars[var] == "scalar":
+
+                if var in self.ds_subset_params:
+                    self.ds_subset_params[var] = xr.DataArray([ds_subset_params[var].data.flat[0]],
+                                                          dims=["scalar"], attrs=ds_subset_params[var].attrs)
+                else:
+                    raise ValueError(f"DataAssimilation: {var} not present in self.ds_subset_params.")
+
         _ = self.create_ad_nodiff_or_adj_input_nc(dict_og_params_fields_vals, dict_params_fields_num_dims,
                                                   dict_params_coords, dict_params_attrs_type, dict_params_fields_or_scalars,
-                                                  "adj")
+                                                  None, "ad_input_nodiff_prior.nc")
+
+        self.ds_prior_fields = xr.open_dataset(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
+        self.ds_prior_fields["prior_delta_z_scaler"] = xr.DataArray([self.prior_delta_z_scaler], dims=["scalar"], attrs={"type": "hyperparameter_prior"})
+
+        # Ensure the sequence in these arrays is the same as defined in ad_specs.h
+
+        if any(value == "2D" for value in self.dict_params_fields_num_dims.values()):
+            self.dict_prior_sigmas_2d = {key: self.dict_prior_sigmas[key] for key in self.dict_prior_sigmas if self.dict_params_fields_num_dims[key] == "2D"}
+            self.ds_prior_fields["genarr2d_sigma_arr"] = xr.DataArray(list(self.dict_prior_sigmas_2d.values()), dims=["genarr2d"], attrs={"type": "hyperparameter_prior"})
+            self.dict_prior_gammas_2d = {key: self.dict_prior_gammas[key] for key in self.dict_prior_gammas if self.dict_params_fields_num_dims[key] == "2D"}
+            self.ds_prior_fields["genarr2d_gamma_arr"] = xr.DataArray(list(self.dict_prior_gammas_2d.values()), dims=["genarr2d"], attrs={"type": "hyperparameter_prior"})
+            self.dict_prior_deltas_2d = {key: self.dict_prior_deltas[key] for key in self.dict_prior_deltas if self.dict_params_fields_num_dims[key] == "2D"}
+            self.ds_prior_fields["genarr2d_delta_arr"] = xr.DataArray(list(self.dict_prior_deltas_2d.values()), dims=["genarr2d"], attrs={"type": "hyperparameter_prior"})
+
+        if any(value == "3D" for value in self.dict_params_fields_num_dims.values()):
+            self.dict_prior_sigmas_3d = {key: self.dict_prior_sigmas[key] for key in self.dict_prior_sigmas if self.dict_params_fields_num_dims[key] == "3D"}
+            self.ds_prior_fields["genarr3d_sigma_arr"] = xr.DataArray(list(self.dict_prior_sigmas_3d.values()), dims=["genarr3d"], attrs={"type": "hyperparameter_prior"})
+            self.dict_prior_gammas_3d = {key: self.dict_prior_gammas[key] for key in self.dict_prior_gammas if self.dict_params_fields_num_dims[key] == "3D"}
+            self.ds_prior_fields["genarr3d_gamma_arr"] = xr.DataArray(list(self.dict_prior_gammas_3d.values()), dims=["genarr3d"], attrs={"type": "hyperparameter_prior"})
+            self.dict_prior_deltas_3d = {key: self.dict_prior_deltas[key] for key in self.dict_prior_deltas if self.dict_params_fields_num_dims[key] == "3D"}
+            self.ds_prior_fields["genarr3d_delta_arr"] = xr.DataArray(list(self.dict_prior_deltas_3d.values()), dims=["genarr3d"], attrs={"type": "hyperparameter_prior"})
+
+        # Some weird permission denied error if this file is not removed first.
+        self.remove_dir(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
+        self.ds_prior_fields.to_netcdf(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
+
+        if prior_X is not None:
+
+            self.prior_X = prior_X
+
+        elif num_prior_samples is not None:
+
+            if num_prior_samples > 0:
+                self.num_prior_samples = num_prior_samples
+                self.prior_C_mean, self.prior_C_std = self.pointwise_marginals("prior_C", self.num_prior_samples)
+                self.prior_X = 1 / self.prior_C_std
+            else:
+                raise ValueError("DataAssimilation: Number of prior samples has to be a positive integer when prior_X is None.")
+
+        else:
+
+            raise ValueError("DataAssimilation: Both prior_X and num_prior_samples should not be defined.")
+
+        dict_tlm_action_only_fields_vals = {}
+        for var in self.prior_X:
+
+            if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+                if self.dict_tlm_action_fields_or_scalars[var] == "scalar" and self.dict_tlm_action_fields_num_dims[var] == "2D":
+                    dict_tlm_action_only_fields_vals[var] = self.prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1))**0.5
+                elif self.dict_tlm_action_fields_or_scalars[var] == "scalar" and self.dict_tlm_action_fields_num_dims[var] == "3D":
+                    dict_tlm_action_only_fields_vals[var] = self.prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1)*(self.KCMAX+1))**0.5
+                else:
+                    dict_tlm_action_only_fields_vals[var] = self.prior_X[var].data.copy()
+
+        _ =  self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
+
+        self.copy_dir(self.dict_ad_inp_nc_files["tlm_action"],
+                      self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
+
         self.fc, self.fc_data, self.fc_reg = self.eval_cost()
-        self.ds_subset_params = self.eval_params()
 
     @beartype
     def create_ad_nodiff_or_adj_input_nc(self,
@@ -134,11 +209,17 @@ class DataAssimilation:
                                          dict_coords: Dict[str, Float[np.ndarray, "dim"]],
                                          dict_attrs_type: Dict[str, str],
                                          dict_fields_or_scalars: Dict[str, str],
-                                         ad_key: str) -> Any:
+                                         ad_key: Optional[str] = None,
+                                         filename: Optional[str] = None) -> Any:
         
         if dict_fields_vals.keys() != dict_fields_num_dims.keys() != dict_coords.keys() != dict_attrs_type.keys() != dict_fields_or_scalars:
             raise ValueError("create_ad_nodiff_or_adj_input_nc: Inconsistent keys.")
         
+        if ad_key is None and filename is None:
+            raise ValueError("create_ad_nodiff_or_adj_input_nc: Both ad_key and filename cannot be None.")
+        if ad_key is not None and filename is not None:
+            raise ValueError("create_ad_nodiff_or_adj_input_nc: Both ad_key and filename cannot be defined. filename is defined when the path is not related to ad_keys, eg for prior file.")
+
         ds_inp_fields = xr.Dataset()
 
         for field in dict_fields_vals:
@@ -241,9 +322,14 @@ class DataAssimilation:
             if field in dict_attrs_type:
                 ds_inp_fields[field].attrs["type"] = dict_attrs_type[field]
 
-        # Some weird permission denied error if this file is not removed first.
-        self.remove_dir(self.dict_ad_inp_nc_files[ad_key])  
-        ds_inp_fields.to_netcdf(self.dict_ad_inp_nc_files[ad_key])
+        if ad_key is not None:
+            # Some weird permission denied error if this file is not removed first.
+            self.remove_dir(self.dict_ad_inp_nc_files[ad_key])
+            ds_inp_fields.to_netcdf(self.dict_ad_inp_nc_files[ad_key])
+        else:
+            # Some weird permission denied error if this file is not removed first.
+            self.remove_dir(self.ad_io_dir + "/" + filename)
+            ds_inp_fields.to_netcdf(self.ad_io_dir + "/" + filename)
 
         # Returns ds_inp_fields where even scalars are expressed as fields
         return ds_inp_fields
@@ -258,14 +344,16 @@ class DataAssimilation:
         self.remove_dir(self.dict_ad_out_nc_files[ad_key])
 
         with open(self.dict_ad_log_files[ad_key], "w") as log:
-            subprocess.run(
-                f"time {self.dict_ad_exec_cmds[ad_key]}",
-                cwd=self.src_dir,
-                shell=True,
-                stdout=log,
-                stderr=subprocess.STDOUT)
+            process = subprocess.run(
+                        f"time {self.dict_ad_exec_cmds[ad_key]}",
+                        cwd=self.src_dir,
+                        shell=True,
+                        stdout=log,
+                        stderr=subprocess.STDOUT)
 
         ds_out_fields = xr.open_dataset(self.dict_ad_out_nc_files[ad_key])
+        ds_out_fields.load()
+        ds_out_fields = ds_out_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
 
         # Returns ds_out_fields where even scalars are expressed as fields since we are reading simulation output
         return ds_out_fields
@@ -280,9 +368,10 @@ class DataAssimilation:
             raise ValueError(f"get_vx_vy_s: AD input file {self.dict_sico_out_folders['nodiff']}/{sico_out_nc_file} is missing.")
 
         ds_out_fields = xr.open_dataset(path_sico_out_nc)
+        ds_out_fields.load()
 
         if "vx_s_g" not in ds_out_fields or "vy_s_g" not in ds_out_fields:
-            raise ValueError("get_vx_vy_s: One or both of vx_s_g or vy_s_g missing!")
+            raise ValueError("get_vx_vy_s: One or both of vx_s_g or vy_s_g missing.")
     
         vx_s_g = ds_out_fields["vx_s_g"].data
         vy_s_g = ds_out_fields["vy_s_g"].data
@@ -302,8 +391,10 @@ class DataAssimilation:
     @beartype
     def eval_params(self) -> Any:
 
-        # Have to evaluate the out nc for coords value consistency when merging with other output datasets.
         ds_out_fields_nodiff = xr.open_dataset(self.dict_ad_out_nc_files["nodiff"])
+        ds_out_fields_nodiff.load()
+        ds_out_fields_nodiff = ds_out_fields_nodiff.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+
         ds_subset_params = self.subset_of_ds(ds_out_fields_nodiff, attr_key = "type", attr_value = "nodiff")
 
         for var in self.dict_params_fields_or_scalars:
@@ -314,7 +405,7 @@ class DataAssimilation:
                     ds_subset_params[var] = xr.DataArray([ds_subset_params[var].data.flat[0]], 
                                                           dims=["scalar"], attrs=ds_subset_params[var].attrs)
                 else:
-                    raise ValueError(f"eval_params: {var} not present in ds_subset_params!")
+                    raise ValueError(f"eval_params: {var} not present in ds_subset_params.")
 
         return ds_subset_params
 
@@ -337,7 +428,7 @@ class DataAssimilation:
                                                   dict_coords = self.dict_params_coords,
                                                   dict_attrs_type = self.dict_params_attrs_type,
                                                   dict_fields_or_scalars = self.dict_params_fields_or_scalars,
-                                                  ad_key = "nodiff")
+                                                  ad_key = "nodiff", filename = None)
  
         return None
 
@@ -522,7 +613,7 @@ class DataAssimilation:
                                                                          self.dict_tlm_action_coords,
                                                                          self.dict_tlm_action_attrs_type,
                                                                          self.dict_tlm_action_fields_or_scalars,
-                                                                         "tlm_action")
+                                                                         "tlm_action", None)
 
         ds_subset_tlm = self.subset_of_ds(ds_inp_fields_tlm_action, "type", "tlm")
 
@@ -590,7 +681,9 @@ class DataAssimilation:
 
         ds_subset_tlm_action = self.eval_tlm_action()
         _ = self.eval_noise_cov_inv_action(ds_subset_tlm_action)
+
         ds_inp_fields_adj_action = xr.open_dataset(self.dict_ad_inp_nc_files["adj_action"])
+        ds_inp_fields_adj_action.load()
 
         if self.bool_surfvel_cost:
 
@@ -624,9 +717,11 @@ class DataAssimilation:
         return self.eval_adj_action()
 
     @beartype
-    def eval_sqrt_prior_cov_inv_action(self) -> Any:
+    def eval_sqrt_prior_C_inv_action(self) -> Any:
 
         ds_inp_fields_tlm = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
+        ds_inp_fields_tlm.load()
+
         ds_subset_fields_tlm = self.subset_of_ds(ds_inp_fields_tlm, "type", "tlm")
 
         for var in ds_subset_fields_tlm:
@@ -635,15 +730,12 @@ class DataAssimilation:
 
             if self.dict_params_fields_or_scalars[basic_str] == "scalar":
 
-                if not isinstance(self.dict_prior_sigmas[basic_str], float):
-                    raise ValueError("eval_sqrt_prior_cov_inv_action: sigma for scalar field should also be scalar.")
-
-                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data / self.dict_prior_sigmas[basic_str] * self.prior_alpha**0.5
+                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data / self.dict_prior_sigmas[basic_str]
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D":
 
-                gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
-                delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
                 delta_x = self.delta_x
                 delta_y = self.delta_y
                 IMAX = self.IMAX
@@ -672,8 +764,8 @@ class DataAssimilation:
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D":
 
-                gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
-                delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
                 delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
                 delta_z = delta_z * self.prior_delta_z_scaler
                 KCMAX = self.KCMAX
@@ -689,13 +781,8 @@ class DataAssimilation:
 
                 ds_subset_fields_tlm[var].data = field_new.copy()
 
-                #                if not isinstance(self.dict_prior_sigmas[basic_str], np.ndarray) or ds_subset_fields_tlm[var].data.shape != self.dict_prior_sigmas[basic_str].shape:
-                #                    raise ValueError("eval_sqrt_prior_cov_inv_action: sigma for 3D field should also be a 3D np.ndarray with the correct shape.")
-                #
-                #                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data / self.dict_prior_sigmas[basic_str]
-
             else:
-                raise ValueError("eval_sqrt_prior_cov_inv_action: Issue with var. Prior action only works for scalar, or 2D and 3D fields.")
+                raise ValueError(f"eval_sqrt_prior_C_inv_action: Issue with {var}. Prior action only works for scalar, or 2D and 3D fields.")
 
         dict_tlm_action_only_fields_vals = {}
         for var in ds_subset_fields_tlm:
@@ -709,17 +796,42 @@ class DataAssimilation:
         return self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
 
     @beartype
-    def eval_sqrt_prior_cov_action(self, 
-                                   ad_key_adj_or_adj_action_or_tlm_action: str) -> Any:
+    def eval_sqrt_prior_cov_inv_action(self) -> Any:
+
+        ds_subset_x = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
+        ds_subset_x.load()
+        ds_subset_x = self.subset_of_ds(ds_subset_x, "type", "tlm")
+
+        dict_tlm_action_only_fields_vals = {}
+        for var in ds_subset_x:
+
+            basic_str = var[:-1]
+            if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+
+                if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_x[var].data.flat[0].copy() / (self.dict_prior_sigmas[basic_str] * self.prior_X[var].data)
+                else:
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_x[var].data.copy() / (self.dict_prior_sigmas[basic_str] * self.prior_X[var].data)
+
+        _ =  self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
+
+        return self.eval_sqrt_prior_C_inv_action()
+
+    @beartype
+    def eval_sqrt_prior_C_action(self,
+                                 ad_key_adj_or_adj_action_or_tlm_action: str) -> Any:
 
         if ad_key_adj_or_adj_action_or_tlm_action not in ["tlm_action", "adj", "adj_action"]:
-            raise ValueError("eval_sqrt_prior_cov_inv_action: Can only act on tlm or adj or adj_action quantities.")
+            raise ValueError("eval_sqrt_prior_C_action: Can only act on tlm or adj or adj_action quantities.")
 
         if ad_key_adj_or_adj_action_or_tlm_action == "tlm_action":
             ds_fields_adj_or_adj_action_or_tlm_action = xr.open_dataset(self.dict_ad_inp_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
+            ds_fields_adj_or_adj_action_or_tlm_action.load()
             ad_subset_key = "tlm"
         else:
             ds_fields_adj_or_adj_action_or_tlm_action = xr.open_dataset(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
+            ds_fields_adj_or_adj_action_or_tlm_action.load()
+            ds_fields_adj_or_adj_action_or_tlm_action = ds_fields_adj_or_adj_action_or_tlm_action.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
             ad_subset_key = "adj"
 
         ds_subset_fields_params = self.subset_of_ds(ds_fields_adj_or_adj_action_or_tlm_action, "type", "nodiff")
@@ -731,15 +843,12 @@ class DataAssimilation:
 
             if self.dict_params_fields_or_scalars[basic_str] == "scalar" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
-                if not isinstance(self.dict_prior_sigmas[basic_str], float):
-                    raise ValueError("eval_sqrt_prior_cov_action: sigma for scalar field should also be scalar.")
-
-                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str] / self.prior_alpha**0.5
+                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str]
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
-                gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
-                delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
                 delta_x = self.delta_x
                 delta_y = self.delta_y
                 IMAX = self.IMAX
@@ -791,8 +900,8 @@ class DataAssimilation:
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
-                gamma = self.prior_alpha**0.5*self.dict_prior_gammas[basic_str]
-                delta = self.prior_alpha**0.5*self.dict_prior_deltas[basic_str]
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
                 delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
                 delta_z = delta_z * self.prior_delta_z_scaler
                 KCMAX = self.KCMAX
@@ -822,11 +931,6 @@ class DataAssimilation:
 
                 ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
 
-                #                if not isinstance(self.dict_prior_sigmas[basic_str], np.ndarray) or ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.shape != self.dict_prior_sigmas[basic_str].shape:
-                #                    raise ValueError("eval_sqrt_prior_cov_action: sigma for 3D field should also be a 3D np.ndarray with the correct shape.")
-                #
-                #                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str]
-
         ds_fields = xr.merge([ds_subset_fields_params, ds_subset_fields_adj_or_adj_action_or_tlm_action])
 
         if ad_key_adj_or_adj_action_or_tlm_action == "tlm_action":
@@ -836,8 +940,8 @@ class DataAssimilation:
         else:
             # Some weird permission denied error if this file is not removed first.
             self.remove_dir(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
-            ds_fields.to_netcdf(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])            
-        
+            ds_fields.to_netcdf(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
+
         if ad_key_adj_or_adj_action_or_tlm_action != "tlm_action" and self.dict_params_fields_or_scalars is not None:
 
             ds_subset_adj_or_adj_action = ds_subset_fields_adj_or_adj_action_or_tlm_action.copy()
@@ -868,17 +972,118 @@ class DataAssimilation:
             return self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
 
     @beartype
+    def eval_sqrt_prior_cov_action(self,
+                                   ad_key_adj_or_tlm_action: str) -> Any:
+
+        _ = self.eval_sqrt_prior_C_action(ad_key_adj_or_tlm_action)
+
+        if ad_key_adj_or_tlm_action not in ["tlm_action", "adj"]:
+            raise ValueError("eval_sqrt_prior_cov_action: Can only act on tlm or adj quantities.")
+
+        if ad_key_adj_or_tlm_action == "tlm_action":
+            ds_fields_adj_or_tlm_action = xr.open_dataset(self.dict_ad_inp_nc_files[ad_key_adj_or_tlm_action])
+            ds_fields_adj_or_tlm_action.load()
+            ad_subset_key = "tlm"
+        else:
+            ds_fields_adj_or_tlm_action = xr.open_dataset(self.dict_ad_out_nc_files[ad_key_adj_or_tlm_action])
+            ds_fields_adj_or_tlm_action.load()
+            ds_fields_adj_or_tlm_action = ds_fields_adj_or_tlm_action.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+            ad_subset_key = "adj"
+
+        ds_subset_fields_params = self.subset_of_ds(ds_fields_adj_or_tlm_action, "type", "nodiff")
+        ds_subset_fields_adj_or_tlm_action = self.subset_of_ds(ds_fields_adj_or_tlm_action, "type", ad_subset_key)
+
+        for var in ds_subset_fields_adj_or_tlm_action:
+
+            basic_str = var[:-1]
+
+            if (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
+                ds_subset_fields_adj_or_tlm_action[var].data = ds_subset_fields_adj_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str] * self.prior_X[basic_str + "d"].data
+
+        ds_fields = xr.merge([ds_subset_fields_params, ds_subset_fields_adj_or_tlm_action])
+
+        if ad_key_adj_or_tlm_action == "tlm_action":
+            # Some weird permission denied error if this file is not removed first.
+            self.remove_dir(self.dict_ad_inp_nc_files[ad_key_adj_or_tlm_action])
+            ds_fields.to_netcdf(self.dict_ad_inp_nc_files[ad_key_adj_or_tlm_action])
+        else:
+            # Some weird permission denied error if this file is not removed first.
+            self.remove_dir(self.dict_ad_out_nc_files[ad_key_adj_or_tlm_action])
+            ds_fields.to_netcdf(self.dict_ad_out_nc_files[ad_key_adj_or_tlm_action])            
+        
+        if ad_key_adj_or_tlm_action == "adj" and self.dict_params_fields_or_scalars is not None:
+
+            ds_subset_adj_or_adj_action = ds_subset_fields_adj_or_tlm_action.copy()
+
+            if self.list_fields_to_ignore:
+                ds_subset_adj_or_adj_action = \
+                ds_subset_adj_or_adj_action.drop_vars([var for var in ds_subset_adj_or_adj_action if var[:-1] in self.list_fields_to_ignore])
+
+            for varb in ds_subset_adj_or_adj_action:
+
+                if (not self.list_fields_to_ignore or (self.list_fields_to_ignore and varb[:-1] not in self.list_fields_to_ignore)) and self.dict_params_fields_or_scalars[varb[:-1]] == "scalar":
+                        fieldb_sum = np.sum(ds_subset_adj_or_adj_action[varb].data)
+                        ds_subset_adj_or_adj_action[varb] = xr.DataArray([fieldb_sum], dims=["scalar"], attrs=ds_subset_adj_or_adj_action[varb].attrs)
+
+            return ds_subset_adj_or_adj_action
+
+        elif ad_key_adj_or_tlm_action == "tlm_action" and self.dict_params_fields_or_scalars is not None:
+
+            dict_tlm_action_only_fields_vals = {}
+            for var in ds_subset_fields_adj_or_tlm_action:
+
+                if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+                    if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+                        dict_tlm_action_only_fields_vals[var] = ds_subset_fields_adj_or_tlm_action[var].data.flat[0].copy()
+                    else:
+                        dict_tlm_action_only_fields_vals[var] = ds_subset_fields_adj_or_tlm_action[var].data.copy()
+
+            return self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
+
+    @beartype
+    def eval_sqrt_prior_covT_action(self,
+                                    ad_key_adj_or_adj_action: str) -> Any:
+
+        if ad_key_adj_or_adj_action not in ["adj", "adj_action"]:
+            raise ValueError("eval_sqrt_prior_covT_action: Can only act on adj or adj_action quantities.")
+
+        ds_adj_fields = xr.open_dataset(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action])
+        ds_adj_fields.load()
+        ds_adj_fields = ds_adj_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+
+        ds_subset_params_fields = self.subset_of_ds(ds_adj_fields, "type", "nodiff")
+        ds_subset_adj_fields = self.subset_of_ds(ds_adj_fields, "type", "adj")
+
+        for varb in ds_subset_adj_fields:
+
+            basic_str = varb[:-1]
+
+            if not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore):
+                ds_subset_adj_fields[varb].data = ds_subset_adj_fields[varb].data * self.dict_prior_sigmas[basic_str] * self.prior_X[basic_str + "d"].data
+
+        ds_subset_params_fields = ds_subset_params_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+        ds_subset_adj_fields = ds_subset_adj_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+
+        ds_adj_fields = xr.merge([ds_subset_params_fields, ds_subset_adj_fields])
+        # Some weird permission denied error if this file is not removed first.
+        self.remove_dir(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action])
+        ds_adj_fields.to_netcdf(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action])
+
+        return self.eval_sqrt_prior_C_action(ad_key_adj_or_adj_action_or_tlm_action = ad_key_adj_or_adj_action)
+
+    @beartype
     def eval_prior_preconditioned_misfit_hessian_action(self) -> Any:
 
-        ds_subset_inp_tlm_action = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
+        ds_subset_inp_tlm_action = self.eval_sqrt_prior_cov_action(ad_key_adj_or_tlm_action = "tlm_action")
         ds_subset_misfit_hessian_action = self.eval_misfit_hessian_action()
 
-        return self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "adj_action")
+        return self.eval_sqrt_prior_covT_action(ad_key_adj_or_adj_action = "adj_action")
 
     @beartype
     def eval_prior_preconditioned_hessian_action(self) -> Any:
 
         ds_inp_tlm_action = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
+        ds_inp_tlm_action.load()
         ds_subset_tlm = self.subset_of_ds(ds_inp_tlm_action, "type", "tlm")
 
         ds_subset_prior_precond_misfit_hess_action = self.eval_prior_preconditioned_misfit_hessian_action()
@@ -901,8 +1106,7 @@ class DataAssimilation:
                            tolerance_type: str = "superlinear",
                            MAX_ITERS_CG: Optional[int] = None) -> Any:
 
-        ds_subset_gradient_hat = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "adj")
-
+        ds_subset_gradient_hat = self.eval_sqrt_prior_covT_action(ad_key_adj_or_adj_action = "adj")
         norm_gradient_hat = self.l2_inner_product([ds_subset_gradient_hat, ds_subset_gradient_hat], ["adj", "adj"])**0.5
 
         ds_subset_p_hat = self.linear_sum([ds_subset_gradient_hat, ds_subset_gradient_hat], 
@@ -928,7 +1132,7 @@ class DataAssimilation:
 
             if v_hatT_H_hat_v_hat < 0:
 
-                print("conjugate_gradient: Hessian no longer positive definite!")
+                print("conjugate_gradient: Hessian no longer positive definite.")
 
                 p_hatT_g_hat = self.l2_inner_product([ds_subset_p_hat, ds_subset_gradient_hat], ["adj", "adj"])
                 norm_p_hat = self.l2_inner_product([ds_subset_p_hat, ds_subset_p_hat], ["adj", "adj"])**0.5
@@ -1046,8 +1250,8 @@ class DataAssimilation:
             # Some weird permission denied error if this file is not removed first.
             self.remove_dir(self.dict_ad_out_nc_files["adj"])
             ds_out.to_netcdf(self.dict_ad_out_nc_files["adj"])
-            ds_subset_descent_dir = self.eval_sqrt_prior_cov_action("adj")
 
+            ds_subset_descent_dir = self.eval_sqrt_prior_cov_action("adj")
 
             alpha, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient,
                                                                          ds_subset_descent_dir,
@@ -1103,13 +1307,11 @@ class DataAssimilation:
         elif mode == "misfit_prior_precond":
             func_hessian_action = self.eval_prior_preconditioned_misfit_hessian_action
             
-        ds_omega_tlm_only = self.create_ad_tlm_action_input_nc(bool_randomize = True)
-        ds_omega = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
-        ds_subset_params = self.subset_of_ds(ds_omega, "type", "nodiff")
+        ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
 
         l = sampling_param_k_REVD + oversampling_param_p_REVD
-        m, _ = self.flattened_vector(ds_omega_tlm_only)
-        list_ds_Q_cols = []
+        m, _ = self.flattened_vector(ds_subset_omega)
+        list_ds_subset_Q_cols = []
         Q = np.empty((0, 0))
 
         while True:
@@ -1124,40 +1326,37 @@ class DataAssimilation:
                 q = y / np.linalg.norm(y)
                 Q = q.reshape(-1, 1)
 
-            ds_q = self.construct_ds(q.reshape(-1,), ds_omega_tlm_only)
-            list_ds_Q_cols.append(ds_q)
+            ds_subset_q = self.construct_ds(q.reshape(-1,), ds_subset_omega)
+            list_ds_subset_Q_cols.append(ds_subset_q)
 
             if Q.shape[1] == l:
                 break
 
-            ds_omega_tlm_only = self.create_ad_tlm_action_input_nc(bool_randomize = True)
-            ds_omega = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
-            ds_subset_params = self.subset_of_ds(ds_omega, "type", "nodiff")
+            ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
 
-        list_ds_AQ_cols = []
+        list_ds_subset_MQ_cols = []
 
-        for ds_q in list_ds_Q_cols:
+        for ds_subset_q in list_ds_subset_Q_cols:
 
             dict_tlm_action_only_fields_vals = {}
-            for var in ds_q:
+            for var in ds_subset_q:
 
                 if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
                     if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
-                        dict_tlm_action_only_fields_vals[var] = ds_q[var].data.flat[0].copy()
+                        dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.flat[0].copy()
                     else:
-                        dict_tlm_action_only_fields_vals[var] = ds_q[var].data.copy()
+                        dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.copy()
 
             _ = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
-            ds_q_fields = self.subset_of_ds(xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"]), "type", "tlm")
 
-            ds_subset_Aq = func_hessian_action()
+            ds_subset_Mq = func_hessian_action()
 
-            list_ds_AQ_cols.append(ds_subset_Aq)
+            list_ds_subset_MQ_cols.append(ds_subset_Mq)
 
         T = np.zeros((l, l), dtype = float)
-        for i, ds_qi in enumerate(list_ds_Q_cols):
-            for j, ds_qj in enumerate(list_ds_AQ_cols):
-                T[i, j] = self.l2_inner_product([ds_qi, ds_qj], ["tlm", "adj"])
+        for i, ds_subset_qi in enumerate(list_ds_subset_Q_cols):
+            for j, ds_subset_qj in enumerate(list_ds_subset_MQ_cols):
+                T[i, j] = self.l2_inner_product([ds_subset_qi, ds_subset_qj], ["tlm", "adj"])
 
         Lambda, S = np.linalg.eig(T)
         U = Q @ S
@@ -1179,28 +1378,35 @@ class DataAssimilation:
 
         self.copy_dir(self.src_dir + "/driveradjoint_orig", self.src_dir + "/driveradjoint")
 
-        ds_subset_gradient_qoi_type_tlm = self.exch_tlm_adj_nc(ds_subset_gradient_qoi, og_type = "adj")
-        ds_subset_C_gradQoI = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
-        sigma_B_squared = self.l2_inner_product([ds_subset_C_gradQoI, ds_subset_C_gradQoI], ["tlm", "tlm"])
+        ds_subset_CT_XT_SigmaT_gradient_qoi = self.eval_sqrt_prior_covT_action(ad_key_adj_or_adj_action = "adj")
 
+        sigma_B_squared = self.l2_inner_product([ds_subset_CT_XT_SigmaT_gradient_qoi, ds_subset_CT_XT_SigmaT_gradient_qoi], ["adj", "adj"])
         sigma_P_squared = sigma_B_squared
 
         for i in range(Lambda_misfit.shape[0]):
 
-            ds_vi = self.construct_ds(U_misfit[:, i], ds_subset_C_gradQoI)
-            sigma_P_squared = sigma_P_squared - Lambda_misfit[i] / (Lambda_misfit[i] + 1) * self.l2_inner_product([ds_subset_C_gradQoI, ds_vi], ["tlm", "tlm"])**2
+            ds_subset_vi = self.construct_ds(U_misfit[:, i], ds_subset_CT_XT_SigmaT_gradient_qoi)
+            sigma_P_squared = sigma_P_squared - Lambda_misfit[i] / (Lambda_misfit[i] + 1) * self.l2_inner_product([ds_subset_CT_XT_SigmaT_gradient_qoi, ds_subset_vi], ["adj", "adj"])**2
 
         delta_sigma_qoi_squared = 1 - sigma_P_squared/sigma_B_squared
 
         return sigma_B_squared, sigma_P_squared, delta_sigma_qoi_squared
 
     @beartype
+    def sample_prior_C(self) -> Any:
+
+        ds_subset_x = self.create_ad_tlm_action_input_nc(bool_randomize = True)
+        ds_subset_prior_C_x = self.eval_sqrt_prior_C_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
+
+        return ds_subset_prior_C_x
+
+    @beartype
     def sample_prior(self) -> Any:
 
-        ds_x = self.create_ad_tlm_action_input_nc(bool_randomize = True)
-        ds_Cx = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
+        ds_subset_x = self.create_ad_tlm_action_input_nc(bool_randomize = True)
+        ds_subset_prior_SigmaXC_x = self.eval_sqrt_prior_cov_action(ad_key_adj_or_tlm_action = "tlm_action")
 
-        return ds_Cx
+        return ds_subset_prior_SigmaXC_x
 
     @beartype
     def sample_posterior(self,
@@ -1209,31 +1415,40 @@ class DataAssimilation:
 
         assert U_misfit.shape[1] == Lambda_misfit.shape[0]
 
-        ds_x = self.create_ad_tlm_action_input_nc(bool_randomize = True)
-        ds_Cx = self.eval_sqrt_prior_cov_action(ad_key_adj_or_adj_action_or_tlm_action = "tlm_action")
+        ds_subset_x = self.create_ad_tlm_action_input_nc(bool_randomize = True)
 
-        ds_vi = self.construct_ds(U_misfit[:, 0], ds_x)
+        ds_subset_vi = self.construct_ds(U_misfit[:, 0], ds_subset_x)
 
-        factor = self.l2_inner_product([ds_vi, ds_x], ["tlm", "tlm"])
+        factor = self.l2_inner_product([ds_subset_vi, ds_subset_x], ["tlm", "tlm"])
         factor = factor * (1 - 1/(1 + Lambda_misfit[0])**0.5)
 
-        ds_V_S_VT = self.linear_sum([ds_vi, ds_vi],
-                                    [factor, 0.0], ["tlm", "tlm"])
+        ds_subset_V_S_VT = self.linear_sum([ds_subset_vi, ds_subset_vi],
+                                          [factor, 0.0], ["tlm", "tlm"])
 
         for i in range(1, Lambda_misfit.shape[0]):
 
-           ds_vi = self.construct_ds(U_misfit[:, i], ds_x)
+           ds_subset_vi = self.construct_ds(U_misfit[:, i], ds_subset_x)
 
-           factor = self.l2_inner_product([ds_vi, ds_x], ["tlm", "tlm"])
+           factor = self.l2_inner_product([ds_subset_vi, ds_subset_x], ["tlm", "tlm"])
            factor = factor * (1 - 1/(1 + Lambda_misfit[i])**0.5)
 
-           ds_V_S_VT = self.linear_sum([ds_V_S_VT, ds_vi],
-                                       [1.0, factor], ["tlm", "tlm"])
+           ds_subset_V_S_VT = self.linear_sum([ds_subset_V_S_VT, ds_subset_vi],
+                                             [1.0, factor], ["tlm", "tlm"])
 
-        ds_sample = self.linear_sum([ds_Cx, ds_V_S_VT],
-                                    [1.0, -1.0], ["tlm", "tlm"])
+        ds_subset_sample_bracket = self.linear_sum([ds_subset_x, ds_subset_V_S_VT],
+                                           [1.0, -1.0], ["tlm", "tlm"])
 
-        return ds_sample
+        dict_tlm_action_only_fields_vals = {}
+        for var in ds_subset_sample_bracket:
+
+            if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+                if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_sample_bracket[var].data.flat[0].copy()
+                else:
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_sample_bracket[var].data.copy()
+
+        _ = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
+        return self.eval_sqrt_prior_cov_action(ad_key_adj_or_tlm_action = "tlm_action")
 
     @beartype
     def pointwise_marginals(self,
@@ -1242,73 +1457,79 @@ class DataAssimilation:
                             U_misfit: Optional[Float[np.ndarray, "dim_m dim_l"]] = None,
                             Lambda_misfit: Optional[Float[np.ndarray, "dim_l"]] = None) -> Any:
 
-        if type_marginals not in ["prior", "posterior"]:
-            raise ValueError("pointwise_marginals: type_marginals can only be prior or posterior.")
+        if type_marginals not in ["prior_C", "prior", "posterior"]:
+            raise ValueError("pointwise_marginals: type_marginals can only be prior_C, prior, or posterior.")
         elif type_marginals == "posterior" and (U_misfit is None or Lambda_misfit is None):
             raise ValueError("pointwise_marginals: For posterior sampling, specify U_misfit and Lambda_misfit from REVD.")
 
         if N_samples <= 0:
 
-            raise ValueError("pointwise_marginals: N_samples has to be postive!")
+            raise ValueError("pointwise_marginals: N_samples has to be postive.")
 
         elif N_samples == 1:
 
-            if type_marginals == "prior":
-                mean_samples = self.sample_prior()
+            if type_marginals == "prior_C":
+                ds_subset_mean_samples = self.sample_prior_C()
+            elif type_marginals == "prior":
+                ds_subset_mean_samples = self.sample_prior()
             elif type_marginals == "posterior":
-                mean_samples = self.sample_posterior(U_misfit, Lambda_misfit)
+                ds_subset_mean_samples = self.sample_posterior(U_misfit, Lambda_misfit)
 
-            return mean_samples, xr.zeros_like(mean_samples)
+            return ds_subset_mean_samples, xr.zeros_like(ds_subset_mean_samples)
 
-        if type_marginals == "prior":
-            sample = self.sample_prior()
+        if type_marginals == "prior_C":
+            ds_subset_sample = self.sample_prior_C()
+        elif type_marginals == "prior":
+            ds_subset_sample = self.sample_prior()
         elif type_marginals == "posterior":
-            sample = self.sample_posterior(U_misfit, Lambda_misfit)
+            ds_subset_sample = self.sample_posterior(U_misfit, Lambda_misfit)
 
-        mean_samples = sample.copy()
+        ds_subset_mean_samples = ds_subset_sample.copy()
 
-        mean_samples_squared = sample**2
-        for var in sample.data_vars:
-            mean_samples_squared[var].attrs = sample[var].attrs
-        mean_samples_squared.attrs = sample.attrs
+        ds_subset_mean_samples_squared = ds_subset_sample**2
+        for var in ds_subset_sample.data_vars:
+            ds_subset_mean_samples_squared[var].attrs = ds_subset_sample[var].attrs
+        ds_subset_mean_samples_squared.attrs = ds_subset_sample.attrs
 
         for i in range(N_samples-1):
 
+            if type_marginals == "prior_C":
+                ds_subset_sample = self.sample_prior_C()
             if type_marginals == "prior":
-                sample = self.sample_prior()
+                ds_subset_sample = self.sample_prior()
             elif type_marginals == "posterior":
-                sample = self.sample_posterior(U_misfit, Lambda_misfit)
+                ds_subset_sample = self.sample_posterior(U_misfit, Lambda_misfit)
 
-            mean_samples = self.linear_sum([mean_samples, sample],
-                                          [1.0, 1.0], ["tlm", "tlm"])
+            ds_subset_mean_samples = self.linear_sum([ds_subset_mean_samples, ds_subset_sample],
+                                                    [1.0, 1.0], ["tlm", "tlm"])
 
-            sample_squared = sample**2
-            for var in sample.data_vars:
-                sample_squared[var].attrs = sample[var].attrs
-            sample_squared.attrs = sample.attrs
+            ds_subset_sample_squared = ds_subset_sample**2
+            for var in ds_subset_sample.data_vars:
+                ds_subset_sample_squared[var].attrs = ds_subset_sample[var].attrs
+            ds_subset_sample_squared.attrs = ds_subset_sample.attrs
 
-            mean_samples_squared = self.linear_sum([mean_samples_squared, sample_squared],
-                                                  [1.0, 1.0], ["tlm", "tlm"])
+            ds_subset_mean_samples_squared = self.linear_sum([ds_subset_mean_samples_squared, ds_subset_sample_squared],
+                                                            [1.0, 1.0], ["tlm", "tlm"])
 
-        mean_samples = self.linear_sum([mean_samples, mean_samples],
-                                      [1.0/N_samples, 0.0], ["tlm", "tlm"])
-        mean_samples_squared = self.linear_sum([mean_samples_squared, mean_samples_squared],
-                                              [1.0/N_samples, 0.0], ["tlm", "tlm"])
+        ds_subset_mean_samples = self.linear_sum([ds_subset_mean_samples, ds_subset_mean_samples],
+                                                [1.0/N_samples, 0.0], ["tlm", "tlm"])
+        ds_subset_mean_samples_squared = self.linear_sum([ds_subset_mean_samples_squared, ds_subset_mean_samples_squared],
+                                                        [1.0/N_samples, 0.0], ["tlm", "tlm"])
 
-        squared_mean_samples = mean_samples**2
-        for var in sample.data_vars:
-            squared_mean_samples[var].attrs = mean_samples[var].attrs
-        squared_mean_samples.attrs = mean_samples.attrs
+        ds_subset_squared_mean_samples = ds_subset_mean_samples**2
+        for var in ds_subset_sample.data_vars:
+            ds_subset_squared_mean_samples[var].attrs = ds_subset_mean_samples[var].attrs
+        ds_subset_squared_mean_samples.attrs = ds_subset_mean_samples.attrs
 
-        variance_samples = self.linear_sum([mean_samples_squared, squared_mean_samples],
-                                           [1.0, -1.0], ["tlm", "tlm"])
+        ds_subset_variance_samples = self.linear_sum([ds_subset_mean_samples_squared, ds_subset_squared_mean_samples],
+                                                    [1.0, -1.0], ["tlm", "tlm"])
 
-        std_samples = variance_samples**0.5
-        for var in variance_samples.data_vars:
-            std_samples[var].attrs = variance_samples[var].attrs
-        std_samples.attrs = variance_samples.attrs
+        ds_subset_std_samples = ds_subset_variance_samples**0.5
+        for var in ds_subset_variance_samples.data_vars:
+            ds_subset_std_samples[var].attrs = ds_subset_variance_samples[var].attrs
+        ds_subset_std_samples.attrs = ds_subset_variance_samples.attrs
 
-        return mean_samples, std_samples
+        return ds_subset_mean_samples, ds_subset_std_samples
 
     @beartype
     def l_bfgs(self,
@@ -1339,8 +1560,8 @@ class DataAssimilation:
 
         m = num_pairs_lbfgs
 
-        list_ds_s = []
-        list_ds_y = []
+        list_ds_subset_s = []
+        list_ds_subset_y = []
 
         ds_subset_params_new = self.eval_params()
         ds_subset_gradient_new = self.eval_gradient()
@@ -1359,16 +1580,16 @@ class DataAssimilation:
             
             for i in range(k - 1, idx_lower_limit - 1, -1):
 
-                rho = 1 / self.l2_inner_product([list_ds_y[i-idx_lower_limit], list_ds_s[i-idx_lower_limit]], ["adj", "nodiff"])
+                rho = 1 / self.l2_inner_product([list_ds_subset_y[i-idx_lower_limit], list_ds_subset_s[i-idx_lower_limit]], ["adj", "nodiff"])
                 list_rhos = [rho] + list_rhos
 
-                alpha = rho * self.l2_inner_product([list_ds_s[i-idx_lower_limit], ds_subset_q], ["nodiff", "adj"])
+                alpha = rho * self.l2_inner_product([list_ds_subset_s[i-idx_lower_limit], ds_subset_q], ["nodiff", "adj"])
                 list_alphas = [alpha] + list_alphas
 
-                ds_subset_q = self.linear_sum([ds_subset_q, list_ds_y[i-idx_lower_limit]], [1.0, -alpha], ["adj", "adj"])
+                ds_subset_q = self.linear_sum([ds_subset_q, list_ds_subset_y[i-idx_lower_limit]], [1.0, -alpha], ["adj", "adj"])
 
-            if list_ds_s and list_ds_y:
-                gamma_k = self.l2_inner_product([list_ds_y[0], list_ds_s[0]], ["adj", "nodiff"]) / self.l2_inner_product([list_ds_y[0], list_ds_y[0]], ["adj", "adj"])
+            if list_ds_subset_s and list_ds_subset_y:
+                gamma_k = self.l2_inner_product([list_ds_subset_y[0], list_ds_subset_s[0]], ["adj", "nodiff"]) / self.l2_inner_product([list_ds_subset_y[0], list_ds_subset_y[0]], ["adj", "adj"])
             else:
                 gamma_k = 1.0
 
@@ -1379,8 +1600,8 @@ class DataAssimilation:
 
             for i in range(idx_lower_limit, k):
 
-                beta = list_rhos[k-i-1] * self.l2_inner_product([list_ds_y[i-idx_lower_limit], ds_subset_p], ["adj", "adj"])
-                ds_subset_p = self.linear_sum([ds_subset_p, list_ds_s[i-idx_lower_limit]], [1.0, list_alphas[k-i-1] - beta], ["adj", "nodiff"])  
+                beta = list_rhos[k-i-1] * self.l2_inner_product([list_ds_subset_y[i-idx_lower_limit], ds_subset_p], ["adj", "adj"])
+                ds_subset_p = self.linear_sum([ds_subset_p, list_ds_subset_s[i-idx_lower_limit]], [1.0, list_alphas[k-i-1] - beta], ["adj", "nodiff"])
 
             alpha_line_search, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient_old,
                                                                                      ds_subset_p,
@@ -1406,40 +1627,40 @@ class DataAssimilation:
 
             ds_subset_gradient_new = self.eval_gradient()
 
-            ds_s_k = self.linear_sum([ds_subset_params_new, ds_subset_params_old], [1.0, -1.0], ["nodiff", "nodiff"])
-            ds_y_k = self.linear_sum([ds_subset_gradient_new, ds_subset_gradient_old], [1.0, -1.0], ["adj", "adj"])
+            ds_subset_s_k = self.linear_sum([ds_subset_params_new, ds_subset_params_old], [1.0, -1.0], ["nodiff", "nodiff"])
+            ds_subset_y_k = self.linear_sum([ds_subset_gradient_new, ds_subset_gradient_old], [1.0, -1.0], ["adj", "adj"])
 
-            if len(list_ds_s) < m and len(list_ds_y) < m and len(list_ds_s) == len(list_ds_y):
-                list_ds_s.append(ds_s_k)
-                list_ds_y.append(ds_y_k)
-            elif len(list_ds_s) == m and len(list_ds_y) == m:
-                list_ds_s.pop(0)
-                list_ds_y.pop(0)
-                list_ds_s.append(ds_s_k)
-                list_ds_y.append(ds_y_k)
+            if len(list_ds_subset_s) < m and len(list_ds_subset_y) < m and len(list_ds_subset_s) == len(list_ds_subset_y):
+                list_ds_subset_s.append(ds_subset_s_k)
+                list_ds_subset_y.append(ds_subset_y_k)
+            elif len(list_ds_subset_s) == m and len(list_ds_subset_y) == m:
+                list_ds_subset_s.pop(0)
+                list_ds_subset_y.pop(0)
+                list_ds_subset_s.append(ds_subset_s_k)
+                list_ds_subset_y.append(ds_subset_y_k)
             else:
                 raise ValueError("l_bfgs: Some issue in lists that store the s and y vectors.")
 
         return self.ds_subset_params
         
     @beartype
-    def linear_sum(self, list_subset_ds: List[Any], list_alphas: List[float], list_types: List[str]) -> Any:
+    def linear_sum(self, list_ds_subset: List[Any], list_alphas: List[float], list_types: List[str]) -> Any:
 
-        self.ds_subset_compatibility_check(list_subset_ds, list_types)
+        self.ds_subset_compatibility_check(list_ds_subset, list_types)
 
         if len(list_alphas) != 2:
-            raise ValueError("linear_sum: Only works for two subset_ds, alphas, and types.")
+            raise ValueError("linear_sum: Only works for two ds_subset, alphas, and types.")
 
-        ds_out = list_subset_ds[0].copy()
+        ds_out = list_ds_subset[0].copy()
     
-        for var_0 in list_subset_ds[0]:
+        for var_0 in list_ds_subset[0]:
     
             if list_types[0] != "nodiff":
                 basic_str_0 = var_0[:-1]
             else:
                 basic_str_0 = var_0
     
-            for var_1 in list_subset_ds[1]:
+            for var_1 in list_ds_subset[1]:
     
                 if list_types[1] != "nodiff":
                     basic_str_1 = var_1[:-1]
@@ -1447,29 +1668,29 @@ class DataAssimilation:
                     basic_str_1 = var_1
     
                 if basic_str_0 == basic_str_1:
-                    if list_subset_ds[0][var_0].data.shape != list_subset_ds[1][var_1].data.shape:
-                        raise ValueError(f"linear_sum: {var_0}, {var_1} do not have the same shape in the two subset_ds.")
+                    if list_ds_subset[0][var_0].data.shape != list_ds_subset[1][var_1].data.shape:
+                        raise ValueError(f"linear_sum: {var_0}, {var_1} do not have the same shape in the two ds_subset.")
     
                     if not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str_0 not in self.list_fields_to_ignore):
-                        ds_out[var_0].data = list_alphas[0]*list_subset_ds[0][var_0].data.copy() + list_alphas[1]*list_subset_ds[1][var_1].data.copy()
+                        ds_out[var_0].data = list_alphas[0]*list_ds_subset[0][var_0].data.copy() + list_alphas[1]*list_ds_subset[1][var_1].data.copy()
     
         return ds_out
 
     @beartype
-    def l2_inner_product(self, list_subset_ds: List[Any], list_types: List[str]) -> float:
+    def l2_inner_product(self, list_ds_subset: List[Any], list_types: List[str]) -> float:
 
-        self.ds_subset_compatibility_check(list_subset_ds, list_types)
+        self.ds_subset_compatibility_check(list_ds_subset, list_types)
 
         inner_product = 0.0
 
-        for var_0 in list_subset_ds[0]:
+        for var_0 in list_ds_subset[0]:
 
             if list_types[0] != "nodiff":
                 basic_str_0 = var_0[:-1]
             else:
                 basic_str_0 = var_0
     
-            for var_1 in list_subset_ds[1]:
+            for var_1 in list_ds_subset[1]:
     
                 if list_types[1] != "nodiff":
                     basic_str_1 = var_1[:-1]
@@ -1477,11 +1698,11 @@ class DataAssimilation:
                     basic_str_1 = var_1
     
                 if basic_str_0 == basic_str_1:
-                    if list_subset_ds[0][var_0].data.shape != list_subset_ds[1][var_1].data.shape:
-                        raise ValueError(f"l2_inner_product: {var_0}, {var_1} do not have the same shape in the two subset_ds.")
+                    if list_ds_subset[0][var_0].data.shape != list_ds_subset[1][var_1].data.shape:
+                        raise ValueError(f"l2_inner_product: {var_0}, {var_1} do not have the same shape in the two ds_subset.")
 
                     if not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str_0 not in self.list_fields_to_ignore):
-                        inner_product = inner_product + np.sum(list_subset_ds[0][var_0].data*list_subset_ds[1][var_1].data)
+                        inner_product = inner_product + np.sum(list_ds_subset[0][var_0].data*list_ds_subset[1][var_1].data)
     
         return inner_product
 
@@ -1495,7 +1716,7 @@ class DataAssimilation:
             new_type = "tlm"
             ad_key_new = "tlm_action"
         else:
-            raise ValueError("exch_tlm_adj_nc: Invalid og_type {og_type}.")
+            raise ValueError(f"exch_tlm_adj_nc: Invalid og_type {og_type}.")
 
         dict_coords = self.dict_params_coords.copy()
         dict_fields_vals = {}
@@ -1550,7 +1771,7 @@ class DataAssimilation:
                                                                                 dict_coords = dict_coords,
                                                                                 dict_attrs_type = dict_attrs_type,
                                                                                 dict_fields_or_scalars = dict_fields_or_scalars,
-                                                                                ad_key = ad_key_new)
+                                                                                ad_key = ad_key_new, filename = None)
 
         if og_type == "tlmhessaction":
 
@@ -1569,24 +1790,24 @@ class DataAssimilation:
             return ds_subset_tlm
 
     @beartype
-    def ds_subset_compatibility_check(self, list_subset_ds: List[Any], list_types: List[str]) -> None:
+    def ds_subset_compatibility_check(self, list_ds_subset: List[Any], list_types: List[str]) -> None:
     
-        if len(list_subset_ds) != 2 or len(list_types) != 2:
-            return ValueError("ds_subset_compatibility_check: Only works for two subset_ds at a time")
+        if len(list_ds_subset) != 2 or len(list_types) != 2:
+            return ValueError("ds_subset_compatibility_check: Only works for two ds_subset at a time.")
 
-        for var in list_subset_ds[0]:
-            if "type" not in list_subset_ds[0][var].attrs:
-                raise ValueError(f"ds_subset_compatibility_check: Attribute 'type' is missing for variable {var} in first subset_ds.")
-            elif list_subset_ds[0][var].attrs["type"] != list_types[0]:
-                raise ValueError(f"ds_subset_compatibility_check: Type of {var} in first subset_ds is not what is expected i.e. {list_types[0]}.")
+        for var in list_ds_subset[0]:
+            if "type" not in list_ds_subset[0][var].attrs:
+                raise ValueError(f"ds_subset_compatibility_check: Attribute 'type' is missing for variable {var} in first ds_subset.")
+            elif list_ds_subset[0][var].attrs["type"] != list_types[0]:
+                raise ValueError(f"ds_subset_compatibility_check: Type of {var} in first ds_subset is not what is expected i.e. {list_types[0]}.")
             else:
                 pass
 
-        for var in list_subset_ds[1]:
-            if "type" not in list_subset_ds[1][var].attrs:
-                raise ValueError(f"ds_subset_compatibility_check: Attribute 'type' is missing for variable {var} in second subset_ds.")
-            elif list_subset_ds[1][var].attrs["type"] != list_types[1]:
-                raise ValueError(f"ds_subset_compatibility_check: Type of {var} in second subset_ds is not what is expected i.e. {list_types[1]}.")
+        for var in list_ds_subset[1]:
+            if "type" not in list_ds_subset[1][var].attrs:
+                raise ValueError(f"ds_subset_compatibility_check: Attribute 'type' is missing for variable {var} in second ds_subset.")
+            elif list_ds_subset[1][var].attrs["type"] != list_types[1]:
+                raise ValueError(f"ds_subset_compatibility_check: Type of {var} in second ds_subset is not what is expected i.e. {list_types[1]}.")
             else:
                 pass
                 
@@ -1602,7 +1823,7 @@ class DataAssimilation:
             else:
                 return ValueError(f"ds_subset_compatibility_check: {type_var} is not a valid type for this function.")
     
-        for var_0 in list_subset_ds[0]:
+        for var_0 in list_ds_subset[0]:
             if list_suffixes[0] != "":
                 basic_str = var_0[:-1]
                 var_1 = basic_str + list_suffixes[1]
@@ -1610,13 +1831,13 @@ class DataAssimilation:
                 basic_str = var_0
                 var_1 = basic_str + list_suffixes[1]
 
-            if var_1 not in list_subset_ds[1]:
+            if var_1 not in list_ds_subset[1]:
                 if self.list_fields_to_ignore and basic_str in self.list_fields_to_ignore:
                     pass
                 else:
-                    raise ValueError(f"ds_subset_compatibility_check: {var_1} not present in second subset_ds when {var_0} is present in first subset_ds.")
+                    raise ValueError(f"ds_subset_compatibility_check: {var_1} not present in second ds_subset when {var_0} is present in first ds_subset.")
     
-        for var_1 in list_subset_ds[1]:
+        for var_1 in list_ds_subset[1]:
             if list_suffixes[1] != "":
                 basic_str = var_1[:-1]
                 var_0 = basic_str + list_suffixes[0]
@@ -1624,11 +1845,11 @@ class DataAssimilation:
                 basic_str = var_1
                 var_0 = basic_str + list_suffixes[0]
 
-            if var_0 not in list_subset_ds[0]:
+            if var_0 not in list_ds_subset[0]:
                 if self.list_fields_to_ignore and basic_str in self.list_fields_to_ignore:
                     pass
                 else:
-                    raise ValueError(f"ds_subset_compatibility_check: {var_0} not present in first subset_ds when {var_1} is present in second subset_ds.")
+                    raise ValueError(f"ds_subset_compatibility_check: {var_0} not present in first ds_subset when {var_1} is present in second ds_subset.")
     
         return None
 
@@ -1683,7 +1904,7 @@ class DataAssimilation:
     @beartype
     def construct_ds(flattened_vector: Float[np.ndarray, "dim"], original_ds: Any) -> Any:
 
-        reconstructed_ds_data = {}
+        ds_reconstructed_data = {}
         start = 0
         for var_name, var_data in original_ds.data_vars.items():
 
@@ -1692,16 +1913,16 @@ class DataAssimilation:
 
             reshaped_data = flattened_vector[start : start + size].reshape(shape)
 
-            reconstructed_ds_data[var_name] = (var_data.dims, reshaped_data)
+            ds_reconstructed_data[var_name] = (var_data.dims, reshaped_data)
 
             start += size
 
-        reconstructed_ds = xr.Dataset(reconstructed_ds_data, coords=original_ds.coords)
+        ds_reconstructed = xr.Dataset(ds_reconstructed_data, coords=original_ds.coords)
 
-        for var in reconstructed_ds:
-            reconstructed_ds[var].attrs["type"] = original_ds[var].attrs["type"]
+        for var in ds_reconstructed:
+            ds_reconstructed[var].attrs["type"] = original_ds[var].attrs["type"]
 
-        return reconstructed_ds
+        return ds_reconstructed
 
     @staticmethod
     @beartype
