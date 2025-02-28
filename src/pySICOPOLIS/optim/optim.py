@@ -29,7 +29,6 @@ class DataAssimilation:
                  dict_params_fields_or_scalars: Dict[str, str],
                  dict_masks_observables: Dict[str, Optional[Union[Float[np.ndarray, "dimz dimy dimx"], 
                                                                   Float[np.ndarray, "dimy dimx"]]]],
-                 prior_delta_z_scaler: float,
                  dict_prior_sigmas: Dict[str, Optional[float]],
                  dict_prior_gammas: Dict[str, Optional[float]],
                  dict_prior_deltas: Dict[str, Optional[float]],
@@ -40,7 +39,7 @@ class DataAssimilation:
                  filename_vx_vy_s_g: Optional[str] = None,
                  dirpath_store_states: Optional[str] = None,
                  num_prior_samples: Optional[int] = 1000,
-                 prior_X: Optional[Any] = None) -> None:
+                 ds_prior_X: Optional[Any] = None) -> None:
 
         super().__init__()
 
@@ -96,7 +95,6 @@ class DataAssimilation:
         if not all(isinstance(value, float) for value in dict_prior_sigmas.values()):
             raise ValueError("DataAssimilation: All sigma values should be floats.")
 
-        self.prior_delta_z_scaler = prior_delta_z_scaler
         self.dict_prior_sigmas = dict_prior_sigmas
         self.dict_prior_gammas = dict_prior_gammas
         self.dict_prior_deltas = dict_prior_deltas
@@ -131,8 +129,8 @@ class DataAssimilation:
             if self.dict_params_fields_or_scalars and self.dict_params_fields_or_scalars[var] == "scalar":
 
                 if var in self.ds_subset_params:
-                    self.ds_subset_params[var] = xr.DataArray([ds_subset_params[var].data.flat[0]],
-                                                          dims=["scalar"], attrs=ds_subset_params[var].attrs)
+                    self.ds_subset_params[var] = xr.DataArray([self.ds_subset_params[var].data.flat[0]],
+                                                          dims=["scalar"], attrs=self.ds_subset_params[var].attrs)
                 else:
                     raise ValueError(f"DataAssimilation: {var} not present in self.ds_subset_params.")
 
@@ -141,7 +139,8 @@ class DataAssimilation:
                                                   None, "ad_input_nodiff_prior.nc")
 
         self.ds_prior_fields = xr.open_dataset(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
-        self.ds_prior_fields["prior_delta_z_scaler"] = xr.DataArray([self.prior_delta_z_scaler], dims=["scalar"], attrs={"type": "hyperparameter_prior"})
+        self.ds_prior_fields.load()
+        self.ds_prior_fields = self.ds_prior_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
 
         # Ensure the sequence in these arrays is the same as defined in ad_specs.h
 
@@ -165,38 +164,55 @@ class DataAssimilation:
         self.remove_dir(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
         self.ds_prior_fields.to_netcdf(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
 
-        if prior_X is not None:
+        if ds_prior_X is not None:
 
-            self.prior_X = prior_X
+            self.ds_prior_X = ds_prior_X
 
         elif num_prior_samples is not None:
 
             if num_prior_samples > 0:
                 self.num_prior_samples = num_prior_samples
-                self.prior_C_mean, self.prior_C_std = self.pointwise_marginals("prior_C", self.num_prior_samples)
-                self.prior_X = 1 / self.prior_C_std
+                self.ds_prior_C_mean, self.ds_prior_C_std = self.pointwise_marginals("prior_C", self.num_prior_samples)
+                self.ds_prior_X = self.ds_prior_C_std**(-1)
+
             else:
                 raise ValueError("DataAssimilation: Number of prior samples has to be a positive integer when prior_X is None.")
 
         else:
 
-            raise ValueError("DataAssimilation: Both prior_X and num_prior_samples should not be defined.")
+            raise ValueError("DataAssimilation: Both ds_prior_X and num_prior_samples should not be defined.")
 
         dict_tlm_action_only_fields_vals = {}
-        for var in self.prior_X:
+        for var in self.ds_prior_X:
 
             if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
                 if self.dict_tlm_action_fields_or_scalars[var] == "scalar" and self.dict_tlm_action_fields_num_dims[var] == "2D":
-                    dict_tlm_action_only_fields_vals[var] = self.prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1))**0.5
+                    dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1))**0.5
                 elif self.dict_tlm_action_fields_or_scalars[var] == "scalar" and self.dict_tlm_action_fields_num_dims[var] == "3D":
-                    dict_tlm_action_only_fields_vals[var] = self.prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1)*(self.KCMAX+1))**0.5
+                    dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1)*(self.KCMAX+1))**0.5
                 else:
-                    dict_tlm_action_only_fields_vals[var] = self.prior_X[var].data.copy()
+                    dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.copy()
 
+        # Ignored fields are given value 0, manually rectified a few lines below.
         _ =  self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
 
         self.copy_dir(self.dict_ad_inp_nc_files["tlm_action"],
                       self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
+
+        self.ds_prior_X_fields = xr.open_dataset(self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
+        self.ds_prior_X_fields = self.ds_prior_X_fields.load()
+        self.ds_prior_X_fields = self.ds_prior_X_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+
+        # Manually ensure that ignored fields don't have 0 in the X matrix, since it divides in the F90 code. Assigning a dummy value 1.0, should not matter.
+        if self.list_fields_to_ignore:
+            for field in self.list_fields_to_ignore:
+                self.ds_prior_X_fields[field + "d"] = self.ds_prior_X_fields[field].copy()
+                self.ds_prior_X_fields[field + "d"].data = self.ds_prior_X_fields[field].data*0.0 + 1.0
+                self.ds_prior_X_fields[field + "d"].attrs["type"] = "tlm"
+
+        # Some weird permission denied error if this file is not removed first.
+        self.remove_dir(self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
+        self.ds_prior_X_fields.to_netcdf(self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
 
         self.fc, self.fc_data, self.fc_reg = self.eval_cost()
 
@@ -730,7 +746,7 @@ class DataAssimilation:
 
             if self.dict_params_fields_or_scalars[basic_str] == "scalar":
 
-                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data / self.dict_prior_sigmas[basic_str]
+                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data * self.dict_prior_deltas[basic_str]
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D":
 
@@ -766,8 +782,7 @@ class DataAssimilation:
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
-                delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
-                delta_z = delta_z * self.prior_delta_z_scaler
+                delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
                 KCMAX = self.KCMAX
 
                 field = ds_subset_fields_tlm[var].data.copy()
@@ -809,9 +824,9 @@ class DataAssimilation:
             if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
 
                 if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
-                    dict_tlm_action_only_fields_vals[var] = ds_subset_x[var].data.flat[0].copy() / (self.dict_prior_sigmas[basic_str] * self.prior_X[var].data)
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_x[var].data.flat[0].copy() / (self.dict_prior_sigmas[basic_str] * self.ds_prior_X[var].data.flat[0])
                 else:
-                    dict_tlm_action_only_fields_vals[var] = ds_subset_x[var].data.copy() / (self.dict_prior_sigmas[basic_str] * self.prior_X[var].data)
+                    dict_tlm_action_only_fields_vals[var] = ds_subset_x[var].data.copy() / (self.dict_prior_sigmas[basic_str] * self.ds_prior_X[var].data)
 
         _ =  self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
 
@@ -843,7 +858,7 @@ class DataAssimilation:
 
             if self.dict_params_fields_or_scalars[basic_str] == "scalar" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
-                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str]
+                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data / self.dict_prior_deltas[basic_str]
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
@@ -902,8 +917,7 @@ class DataAssimilation:
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
-                delta_z = self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1]
-                delta_z = delta_z * self.prior_delta_z_scaler
+                delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
                 KCMAX = self.KCMAX
 
                 field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
@@ -998,7 +1012,7 @@ class DataAssimilation:
             basic_str = var[:-1]
 
             if (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
-                ds_subset_fields_adj_or_tlm_action[var].data = ds_subset_fields_adj_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str] * self.prior_X[basic_str + "d"].data
+                ds_subset_fields_adj_or_tlm_action[var].data = ds_subset_fields_adj_or_tlm_action[var].data * self.dict_prior_sigmas[basic_str] * self.ds_prior_X[basic_str + "d"].data
 
         ds_fields = xr.merge([ds_subset_fields_params, ds_subset_fields_adj_or_tlm_action])
 
@@ -1059,7 +1073,7 @@ class DataAssimilation:
             basic_str = varb[:-1]
 
             if not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore):
-                ds_subset_adj_fields[varb].data = ds_subset_adj_fields[varb].data * self.dict_prior_sigmas[basic_str] * self.prior_X[basic_str + "d"].data
+                ds_subset_adj_fields[varb].data = ds_subset_adj_fields[varb].data * self.dict_prior_sigmas[basic_str] * self.ds_prior_X[basic_str + "d"].data
 
         ds_subset_params_fields = ds_subset_params_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
         ds_subset_adj_fields = ds_subset_adj_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
