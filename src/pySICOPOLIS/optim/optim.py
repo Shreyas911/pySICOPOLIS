@@ -138,9 +138,7 @@ class DataAssimilation:
                                                   dict_params_coords, dict_params_attrs_type, dict_params_fields_or_scalars,
                                                   None, "ad_input_nodiff_prior.nc")
 
-        self.ds_prior_fields = xr.open_dataset(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
-        self.ds_prior_fields.load()
-        self.ds_prior_fields = self.ds_prior_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+        self.ds_prior_fields = self.open_xr_ds(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
 
         # Ensure the sequence in these arrays is the same as defined in ad_specs.h
 
@@ -199,9 +197,7 @@ class DataAssimilation:
         self.copy_dir(self.dict_ad_inp_nc_files["tlm_action"],
                       self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
 
-        self.ds_prior_X_fields = xr.open_dataset(self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
-        self.ds_prior_X_fields = self.ds_prior_X_fields.load()
-        self.ds_prior_X_fields = self.ds_prior_X_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+        self.ds_prior_X_fields = self.open_xr_ds(self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
 
         # Manually ensure that ignored fields don't have 0 in the X matrix, since it divides in the F90 code. Assigning a dummy value 1.0, should not matter.
         if self.list_fields_to_ignore:
@@ -367,9 +363,7 @@ class DataAssimilation:
                         stdout=log,
                         stderr=subprocess.STDOUT)
 
-        ds_out_fields = xr.open_dataset(self.dict_ad_out_nc_files[ad_key])
-        ds_out_fields.load()
-        ds_out_fields = ds_out_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+        ds_out_fields = self.open_xr_ds(self.dict_ad_out_nc_files[ad_key])
 
         # Returns ds_out_fields where even scalars are expressed as fields since we are reading simulation output
         return ds_out_fields
@@ -383,8 +377,7 @@ class DataAssimilation:
         if not os.path.isfile(path_sico_out_nc):
             raise ValueError(f"get_vx_vy_s: AD input file {self.dict_sico_out_folders['nodiff']}/{sico_out_nc_file} is missing.")
 
-        ds_out_fields = xr.open_dataset(path_sico_out_nc)
-        ds_out_fields.load()
+        ds_out_fields = self.open_xr_ds(path_sico_out_nc, False)
 
         if "vx_s_g" not in ds_out_fields or "vy_s_g" not in ds_out_fields:
             raise ValueError("get_vx_vy_s: One or both of vx_s_g or vy_s_g missing.")
@@ -407,9 +400,7 @@ class DataAssimilation:
     @beartype
     def eval_params(self) -> Any:
 
-        ds_out_fields_nodiff = xr.open_dataset(self.dict_ad_out_nc_files["nodiff"])
-        ds_out_fields_nodiff.load()
-        ds_out_fields_nodiff = ds_out_fields_nodiff.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+        ds_out_fields_nodiff = self.open_xr_ds(self.dict_ad_out_nc_files["nodiff"])
 
         ds_subset_params = self.subset_of_ds(ds_out_fields_nodiff, attr_key = "type", attr_value = "nodiff")
 
@@ -698,8 +689,7 @@ class DataAssimilation:
         ds_subset_tlm_action = self.eval_tlm_action()
         _ = self.eval_noise_cov_inv_action(ds_subset_tlm_action)
 
-        ds_inp_fields_adj_action = xr.open_dataset(self.dict_ad_inp_nc_files["adj_action"])
-        ds_inp_fields_adj_action.load()
+        ds_inp_fields_adj_action = self.open_xr_ds(self.dict_ad_inp_nc_files["adj_action"], False)
 
         if self.bool_surfvel_cost:
 
@@ -735,8 +725,7 @@ class DataAssimilation:
     @beartype
     def eval_sqrt_prior_C_inv_action(self) -> Any:
 
-        ds_inp_fields_tlm = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
-        ds_inp_fields_tlm.load()
+        ds_inp_fields_tlm = self.open_xr_ds(self.dict_ad_inp_nc_files["tlm_action"], False)
 
         ds_subset_fields_tlm = self.subset_of_ds(ds_inp_fields_tlm, "type", "tlm")
 
@@ -813,8 +802,7 @@ class DataAssimilation:
     @beartype
     def eval_sqrt_prior_cov_inv_action(self) -> Any:
 
-        ds_subset_x = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
-        ds_subset_x.load()
+        ds_subset_x = self.open_xr_ds(self.dict_ad_inp_nc_files["tlm_action"], False)
         ds_subset_x = self.subset_of_ds(ds_subset_x, "type", "tlm")
 
         dict_tlm_action_only_fields_vals = {}
@@ -840,13 +828,10 @@ class DataAssimilation:
             raise ValueError("eval_sqrt_prior_C_action: Can only act on tlm or adj or adj_action quantities.")
 
         if ad_key_adj_or_adj_action_or_tlm_action == "tlm_action":
-            ds_fields_adj_or_adj_action_or_tlm_action = xr.open_dataset(self.dict_ad_inp_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
-            ds_fields_adj_or_adj_action_or_tlm_action.load()
+            ds_fields_adj_or_adj_action_or_tlm_action = self.open_xr_ds(self.dict_ad_inp_nc_files[ad_key_adj_or_adj_action_or_tlm_action], False)
             ad_subset_key = "tlm"
         else:
-            ds_fields_adj_or_adj_action_or_tlm_action = xr.open_dataset(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
-            ds_fields_adj_or_adj_action_or_tlm_action.load()
-            ds_fields_adj_or_adj_action_or_tlm_action = ds_fields_adj_or_adj_action_or_tlm_action.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+            ds_fields_adj_or_adj_action_or_tlm_action = self.open_xr_ds(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
             ad_subset_key = "adj"
 
         ds_subset_fields_params = self.subset_of_ds(ds_fields_adj_or_adj_action_or_tlm_action, "type", "nodiff")
@@ -995,13 +980,10 @@ class DataAssimilation:
             raise ValueError("eval_sqrt_prior_cov_action: Can only act on tlm or adj quantities.")
 
         if ad_key_adj_or_tlm_action == "tlm_action":
-            ds_fields_adj_or_tlm_action = xr.open_dataset(self.dict_ad_inp_nc_files[ad_key_adj_or_tlm_action])
-            ds_fields_adj_or_tlm_action.load()
+            ds_fields_adj_or_tlm_action = self.open_xr_ds(self.dict_ad_inp_nc_files[ad_key_adj_or_tlm_action], False)
             ad_subset_key = "tlm"
         else:
-            ds_fields_adj_or_tlm_action = xr.open_dataset(self.dict_ad_out_nc_files[ad_key_adj_or_tlm_action])
-            ds_fields_adj_or_tlm_action.load()
-            ds_fields_adj_or_tlm_action = ds_fields_adj_or_tlm_action.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+            ds_fields_adj_or_tlm_action = self.open_xr_ds(self.dict_ad_out_nc_files[ad_key_adj_or_tlm_action])
             ad_subset_key = "adj"
 
         ds_subset_fields_params = self.subset_of_ds(ds_fields_adj_or_tlm_action, "type", "nodiff")
@@ -1061,9 +1043,7 @@ class DataAssimilation:
         if ad_key_adj_or_adj_action not in ["adj", "adj_action"]:
             raise ValueError("eval_sqrt_prior_covT_action: Can only act on adj or adj_action quantities.")
 
-        ds_adj_fields = xr.open_dataset(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action])
-        ds_adj_fields.load()
-        ds_adj_fields = ds_adj_fields.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+        ds_adj_fields = self.open_xr_ds(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action])
 
         ds_subset_params_fields = self.subset_of_ds(ds_adj_fields, "type", "nodiff")
         ds_subset_adj_fields = self.subset_of_ds(ds_adj_fields, "type", "adj")
@@ -1096,8 +1076,7 @@ class DataAssimilation:
     @beartype
     def eval_prior_preconditioned_hessian_action(self) -> Any:
 
-        ds_inp_tlm_action = xr.open_dataset(self.dict_ad_inp_nc_files["tlm_action"])
-        ds_inp_tlm_action.load()
+        ds_inp_tlm_action = self.open_xr_ds(self.dict_ad_inp_nc_files["tlm_action"], False)
         ds_subset_tlm = self.subset_of_ds(ds_inp_tlm_action, "type", "tlm")
 
         ds_subset_prior_precond_misfit_hess_action = self.eval_prior_preconditioned_misfit_hessian_action()
@@ -1656,7 +1635,18 @@ class DataAssimilation:
                 raise ValueError("l_bfgs: Some issue in lists that store the s and y vectors.")
 
         return self.ds_subset_params
-        
+
+    @beartype
+    def open_xr_ds(self, path: str, bool_assign_coords: bool = True) -> Any:
+
+        ds = xr.open_dataset(path)
+        ds.load()
+
+        if bool_assign_coords:
+            ds = ds.assign_coords({dim: self.ds_subset_params[dim] for dim in self.ds_subset_params.dims})
+
+        return ds
+
     @beartype
     def linear_sum(self, list_ds_subset: List[Any], list_alphas: List[float], list_types: List[str]) -> Any:
 
