@@ -808,23 +808,21 @@ class DataAssimilation:
                 field = ds_subset_fields_tlm[var].data.copy()
                 field_new = delta*field.copy()
 
-                for tad in range(NTDAMAX+1):
+                field_new[:, 0, 0] = field_new[:, 0, 0] - gamma*((field[:, 0, 1]-field[:, 0, 0])/delta_x**2 + (field[:, 1, 0]-field[:, 0, 0])/delta_y**2)
+                field_new[:, JMAX, 0] = field_new[:, JMAX, 0] - gamma*((field[:, JMAX, 1]-field[:, JMAX, 0])/delta_x**2 + (field[:, JMAX-1, 0]-field[:, JMAX, 0])/delta_y**2)
+                field_new[:, 0, IMAX] = field_new[:, 0, IMAX] - gamma*((field[:, 0, IMAX-1]-field[:, 0, IMAX])/delta_x**2 + (field[:, 1, IMAX]-field[:, 0, IMAX])/delta_y**2)
+                field_new[:, JMAX, IMAX] = field_new[:, JMAX, IMAX] - gamma*((field[:, JMAX, IMAX-1]-field[:, JMAX, IMAX])/delta_x**2 + (field[:, JMAX-1, IMAX]-field[:, JMAX, IMAX])/delta_y**2)
 
-                    field_new[tad, 0, 0] = field_new[tad, 0, 0] - gamma*((field[tad, 0, 1]-field[tad, 0, 0])/delta_x**2 + (field[tad, 1, 0]-field[tad, 0, 0])/delta_y**2)
-                    field_new[tad, JMAX, 0] = field_new[tad, JMAX, 0] - gamma*((field[tad, JMAX, 1]-field[tad, JMAX, 0])/delta_x**2 + (field[tad, JMAX-1, 0]-field[tad, JMAX, 0])/delta_y**2)
-                    field_new[tad, 0, IMAX] = field_new[tad, 0, IMAX] - gamma*((field[tad, 0, IMAX-1]-field[tad, 0, IMAX])/delta_x**2 + (field[tad, 1, IMAX]-field[tad, 0, IMAX])/delta_y**2)
-                    field_new[tad, JMAX, IMAX] = field_new[tad, JMAX, IMAX] - gamma*((field[tad, JMAX, IMAX-1]-field[tad, JMAX, IMAX])/delta_x**2 + (field[tad, JMAX-1, IMAX]-field[tad, JMAX, IMAX])/delta_y**2)
+                field_new[:, 1:JMAX, 0] = field_new[:, 1:JMAX, 0] - gamma*((field[:, 0:JMAX-1, 0] - 2*field[:, 1:JMAX, 0] + field[:, 2:, 0])/delta_y**2 + (field[:, 1:JMAX, 1] - field[:, 1:JMAX, 0])/delta_x**2)
+                field_new[:, 1:JMAX, IMAX] = field_new[:, 1:JMAX, IMAX] - gamma*((field[:, 0:JMAX-1, IMAX] - 2*field[:, 1:JMAX, IMAX] + field[:, 2:, IMAX]) / delta_y**2 + (field[:, 1:JMAX, IMAX-1] - field[:, 1:JMAX, IMAX]) / delta_x**2)
 
-                    field_new[tad, 1:JMAX, 0] = field_new[tad, 1:JMAX, 0] - gamma*((field[tad, 0:JMAX-1, 0] - 2*field[tad, 1:JMAX, 0] + field[tad, 2:, 0])/delta_y**2 + (field[tad, 1:JMAX, 1] - field[tad, 1:JMAX, 0])/delta_x**2)
-                    field_new[tad, 1:JMAX, IMAX] = field_new[tad, 1:JMAX, IMAX] - gamma*((field[tad, 0:JMAX-1, IMAX] - 2*field[tad, 1:JMAX, IMAX] + field[tad, 2:, IMAX]) / delta_y**2 + (field[tad, 1:JMAX, IMAX-1] - field[tad, 1:JMAX, IMAX]) / delta_x**2)
+                field_new[:, 0, 1:IMAX] = field_new[:, 0, 1:IMAX] - gamma*((field[:, 1, 1:IMAX] - field[:, 0, 1:IMAX])/delta_y**2 + (field[:, 0, 0:IMAX-1] - 2*field[:, 0, 1:IMAX] + field[:, 0, 2:])/delta_x**2)
+                field_new[:, JMAX, 1:IMAX] = field_new[:, JMAX, 1:IMAX] - gamma*((field[:, JMAX-1, 1:IMAX] - field[:, JMAX, 1:IMAX]) / delta_y**2 + (field[:, JMAX, 0:IMAX-1] - 2*field[:, JMAX, 1:IMAX] + field[:, JMAX, 2:]) / delta_x**2)
 
-                    field_new[tad, 0, 1:IMAX] = field_new[tad, 0, 1:IMAX] - gamma*((field[tad, 1, 1:IMAX] - field[tad, 0, 1:IMAX])/delta_y**2 + (field[tad, 0, 0:IMAX-1] - 2*field[tad, 0, 1:IMAX] + field[tad, 0, 2:])/delta_x**2)
-                    field_new[tad, JMAX, 1:IMAX] = field_new[tad, JMAX, 1:IMAX] - gamma*((field[tad, JMAX-1, 1:IMAX] - field[tad, JMAX, 1:IMAX]) / delta_y**2 + (field[tad, JMAX, 0:IMAX-1] - 2*field[tad, JMAX, 1:IMAX] + field[tad, JMAX, 2:]) / delta_x**2)
-
-                    for j in range(1, JMAX):
-                        for i in range(1, IMAX):
-                            field_new[tad, j, i] = field_new[tad, j, i] - gamma*(field[tad, j, i-1] - 2*field[tad, j, i] + field[tad, j, i+1]) / delta_x**2
-                            field_new[tad, j, i] = field_new[tad, j, i] - gamma*(field[tad, j-1, i] - 2*field[tad, j, i] + field[tad, j+1, i]) / delta_y**2
+                for j in range(1, JMAX):
+                    for i in range(1, IMAX):
+                        field_new[:, j, i] = field_new[:, j, i] - gamma*(field[:, j, i-1] - 2*field[:, j, i] + field[:, j, i+1]) / delta_x**2
+                        field_new[:, j, i] = field_new[:, j, i] - gamma*(field[:, j-1, i] - 2*field[:, j, i] + field[:, j+1, i]) / delta_y**2
 
                 ds_subset_fields_tlm[var].data = field_new.copy()
 
@@ -990,40 +988,38 @@ class DataAssimilation:
 
                 for _ in range(self.MAX_ITERS_SOR):
 
-                    for tad in range(NTDAMAX):
+                    for j in range(JMAX+1):
+                        for i in range(IMAX+1):
 
-                        for j in range(JMAX+1):
-                            for i in range(IMAX+1):
+                            if j == 0 and i == 0:
+                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[:, 0, 0] + gamma*(result_old[:, 0, 1] / delta_x**2 + result_old[:, 1, 0] / delta_y**2)
+                            elif j == JMAX and i == 0:
+                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[:, JMAX, 0] + gamma*(result_old[:, JMAX, 1] / delta_x**2 + result[:, JMAX-1, 0] / delta_y**2)
+                            elif j == 0 and i == IMAX:
+                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[:, 0, IMAX] + gamma*(result[:, 0, IMAX-1] / delta_x**2 + result_old[:, 1, IMAX] / delta_y**2)
+                            elif j == JMAX and i == IMAX:
+                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[:, JMAX, IMAX] + gamma*(result[:, JMAX, IMAX-1] / delta_x**2 + result[:, JMAX-1, IMAX] / delta_y**2)
+                            elif i == 0:
+                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                bracket = field[:, j, 0] + gamma*((result[:, j-1, 0] + result_old[:, j+1, 0]) / delta_y**2 + result_old[:, j, 1] / delta_x**2)
+                            elif i == IMAX:
+                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                bracket = field[:, j, IMAX] + gamma*((result[:, j-1, IMAX] + result_old[:, j+1, IMAX]) / delta_y**2 + result[:, j, IMAX-1] / delta_x**2)
+                            elif j == 0:
+                                diagonal = delta + gamma*(2/delta_x**2 + 1/delta_y**2)
+                                bracket = field[:, 0, i] + gamma*(result_old[:, 1, i] / delta_y**2 + (result[:, 0, i-1] + result_old[:, 0, i+1]) / delta_x**2)
+                            elif j == JMAX:
+                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                bracket = field[:, JMAX, i] + gamma*(result[:, JMAX-1, i] / delta_y**2 + (result[:, JMAX, i-1] + result_old[:, JMAX, i+1]) / delta_x**2)
+                            else:
+                                diagonal = delta + 2*gamma*(1/delta_x**2 + 1/delta_y**2)
+                                bracket = field[:, j, i] + gamma*((result[:, j-1, i] + result_old[:, j+1, i]) / delta_y**2 + (result[:, j, i-1] + result_old[:, j, i+1]) / delta_x**2)
 
-                                if j == 0 and i == 0:
-                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                    bracket = field[tad, 0, 0] + gamma*(result_old[tad, 0, 1] / delta_x**2 + result_old[tad, 1, 0] / delta_y**2)
-                                elif j == JMAX and i == 0:
-                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                    bracket = field[tad, JMAX, 0] + gamma*(result_old[tad, JMAX, 1] / delta_x**2 + result[tad, JMAX-1, 0] / delta_y**2)
-                                elif j == 0 and i == IMAX:
-                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                    bracket = field[tad, 0, IMAX] + gamma*(result[tad, 0, IMAX-1] / delta_x**2 + result_old[tad, 1, IMAX] / delta_y**2)
-                                elif j == JMAX and i == IMAX:
-                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                    bracket = field[tad, JMAX, IMAX] + gamma*(result[tad, JMAX, IMAX-1] / delta_x**2 + result[tad, JMAX-1, IMAX] / delta_y**2)
-                                elif i == 0:
-                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
-                                    bracket = field[tad, j, 0] + gamma*((result[tad, j-1, 0] + result_old[tad, j+1, 0]) / delta_y**2 + result_old[tad, j, 1] / delta_x**2)
-                                elif i == IMAX:
-                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
-                                    bracket = field[tad, j, IMAX] + gamma*((result[tad, j-1, IMAX] + result_old[tad, j+1, IMAX]) / delta_y**2 + result[tad, j, IMAX-1] / delta_x**2)
-                                elif j == 0:
-                                    diagonal = delta + gamma*(2/delta_x**2 + 1/delta_y**2)
-                                    bracket = field[tad, 0, i] + gamma*(result_old[tad, 1, i] / delta_y**2 + (result[tad, 0, i-1] + result_old[tad, 0, i+1]) / delta_x**2)
-                                elif j == JMAX:
-                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
-                                    bracket = field[tad, JMAX, i] + gamma*(result[tad, JMAX-1, i] / delta_y**2 + (result[tad, JMAX, i-1] + result_old[tad, JMAX, i+1]) / delta_x**2)
-                                else:
-                                    diagonal = delta + 2*gamma*(1/delta_x**2 + 1/delta_y**2)
-                                    bracket = field[tad, j, i] + gamma*((result[tad, j-1, i] + result_old[tad, j+1, i]) / delta_y**2 + (result[tad, j, i-1] + result_old[tad, j, i+1]) / delta_x**2)
-
-                                result[tad, j, i] = (1 - self.OMEGA_SOR) * result_old[tad, j, i] + self.OMEGA_SOR / diagonal * bracket
+                            result[:, j, i] = (1 - self.OMEGA_SOR) * result_old[:, j, i] + self.OMEGA_SOR / diagonal * bracket
 
                     result_old = result.copy()
 
