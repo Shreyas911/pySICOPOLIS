@@ -158,6 +158,14 @@ class DataAssimilation:
             self.dict_prior_deltas_3d = {key: self.dict_prior_deltas[key] for key in self.dict_prior_deltas if self.dict_params_fields_num_dims[key] == "3D"}
             self.ds_prior_fields["genarr3d_delta_arr"] = xr.DataArray(list(self.dict_prior_deltas_3d.values()), dims=["genarr3d"], attrs={"type": "hyperparameter_prior"})
 
+        if any(value == "2DT" for value in self.dict_params_fields_num_dims.values()):
+            self.dict_prior_sigmas_2dt = {key: self.dict_prior_sigmas[key] for key in self.dict_prior_sigmas if self.dict_params_fields_num_dims[key] == "2DT"}
+            self.ds_prior_fields["gentim2d_sigma_arr"] = xr.DataArray(list(self.dict_prior_sigmas_2dt.values()), dims=["gentim2d"], attrs={"type": "hyperparameter_prior"})
+            self.dict_prior_gammas_2dt = {key: self.dict_prior_gammas[key] for key in self.dict_prior_gammas if self.dict_params_fields_num_dims[key] == "2DT"}
+            self.ds_prior_fields["gentim2d_gamma_arr"] = xr.DataArray(list(self.dict_prior_gammas_2dt.values()), dims=["gentim2d"], attrs={"type": "hyperparameter_prior"})
+            self.dict_prior_deltas_2dt = {key: self.dict_prior_deltas[key] for key in self.dict_prior_deltas if self.dict_params_fields_num_dims[key] == "2DT"}
+            self.ds_prior_fields["gentim2d_delta_arr"] = xr.DataArray(list(self.dict_prior_deltas_2dt.values()), dims=["gentim2d"], attrs={"type": "hyperparameter_prior"})
+
         # Some weird permission denied error if this file is not removed first.
         self.remove_dir(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
         self.ds_prior_fields.to_netcdf(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
@@ -188,6 +196,8 @@ class DataAssimilation:
                     dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1))**0.5
                 elif self.dict_tlm_action_fields_or_scalars[var] == "scalar" and self.dict_tlm_action_fields_num_dims[var] == "3D":
                     dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1)*(self.KCMAX+1))**0.5
+                elif self.dict_tlm_action_fields_or_scalars[var] == "scalar" and self.dict_tlm_action_fields_num_dims[var] == "2DT":
+                    dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1)*(self.NTDAMAX+1))**0.5
                 else:
                     dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.copy()
 
@@ -276,7 +286,7 @@ class DataAssimilation:
                     )
 
                 else:
-                    raise ValueError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; Only 2D or 2DT or 3D fields accepted.")
+                    raise ValueError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; Only 2D or 3D or 2DT fields accepted.")
                 
             elif isinstance(field_val, np.ndarray) and not isinstance(field_val, (str, bytes)) and dict_fields_or_scalars[field] == "field":
                 
@@ -325,7 +335,7 @@ class DataAssimilation:
                     )
 
                 else:
-                    raise ValueError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; Only 2D or 2DT or 3D fields accepted.")
+                    raise ValueError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; Only 2D or 3D or 2DT fields accepted.")
                 
             else:
                 raise TypeError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; The type doesn't seem to be either a scalar or a numpy array.")
@@ -656,7 +666,7 @@ class DataAssimilation:
         list_vars = [var[:-1] for var in ds_subset_fields_tlm_action]
         if set(self.dict_masks_observables.keys()) != set(list_vars):
             raise ValueError("eval_noise_cov_inv_action: The observables seem to be different than expected.")
-       
+
         if not all(value is None for value in self.dict_masks_observables.values()):
             for key, value in self.dict_masks_observables.items():
                 if value is not None:
@@ -785,8 +795,41 @@ class DataAssimilation:
 
                 ds_subset_fields_tlm[var].data = field_new.copy()
 
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2DT":
+
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
+                delta_x = self.delta_x
+                delta_y = self.delta_y
+                IMAX = self.IMAX
+                JMAX = self.JMAX
+                NTDAMAX = self.NTDAMAX
+
+                field = ds_subset_fields_tlm[var].data.copy()
+                field_new = delta*field.copy()
+
+                for tad in range(NTDAMAX+1):
+
+                    field_new[tad, 0, 0] = field_new[tad, 0, 0] - gamma*((field[tad, 0, 1]-field[tad, 0, 0])/delta_x**2 + (field[tad, 1, 0]-field[tad, 0, 0])/delta_y**2)
+                    field_new[tad, JMAX, 0] = field_new[tad, JMAX, 0] - gamma*((field[tad, JMAX, 1]-field[tad, JMAX, 0])/delta_x**2 + (field[tad, JMAX-1, 0]-field[tad, JMAX, 0])/delta_y**2)
+                    field_new[tad, 0, IMAX] = field_new[tad, 0, IMAX] - gamma*((field[tad, 0, IMAX-1]-field[tad, 0, IMAX])/delta_x**2 + (field[tad, 1, IMAX]-field[tad, 0, IMAX])/delta_y**2)
+                    field_new[tad, JMAX, IMAX] = field_new[tad, JMAX, IMAX] - gamma*((field[tad, JMAX, IMAX-1]-field[tad, JMAX, IMAX])/delta_x**2 + (field[tad, JMAX-1, IMAX]-field[tad, JMAX, IMAX])/delta_y**2)
+
+                    field_new[tad, 1:JMAX, 0] = field_new[tad, 1:JMAX, 0] - gamma*((field[tad, 0:JMAX-1, 0] - 2*field[tad, 1:JMAX, 0] + field[tad, 2:, 0])/delta_y**2 + (field[tad, 1:JMAX, 1] - field[tad, 1:JMAX, 0])/delta_x**2)
+                    field_new[tad, 1:JMAX, IMAX] = field_new[tad, 1:JMAX, IMAX] - gamma*((field[tad, 0:JMAX-1, IMAX] - 2*field[tad, 1:JMAX, IMAX] + field[tad, 2:, IMAX]) / delta_y**2 + (field[tad, 1:JMAX, IMAX-1] - field[tad, 1:JMAX, IMAX]) / delta_x**2)
+
+                    field_new[tad, 0, 1:IMAX] = field_new[tad, 0, 1:IMAX] - gamma*((field[tad, 1, 1:IMAX] - field[tad, 0, 1:IMAX])/delta_y**2 + (field[tad, 0, 0:IMAX-1] - 2*field[tad, 0, 1:IMAX] + field[tad, 0, 2:])/delta_x**2)
+                    field_new[tad, JMAX, 1:IMAX] = field_new[tad, JMAX, 1:IMAX] - gamma*((field[tad, JMAX-1, 1:IMAX] - field[tad, JMAX, 1:IMAX]) / delta_y**2 + (field[tad, JMAX, 0:IMAX-1] - 2*field[tad, JMAX, 1:IMAX] + field[tad, JMAX, 2:]) / delta_x**2)
+
+                    for j in range(1, JMAX):
+                        for i in range(1, IMAX):
+                            field_new[tad, j, i] = field_new[tad, j, i] - gamma*(field[tad, j, i-1] - 2*field[tad, j, i] + field[tad, j, i+1]) / delta_x**2
+                            field_new[tad, j, i] = field_new[tad, j, i] - gamma*(field[tad, j-1, i] - 2*field[tad, j, i] + field[tad, j+1, i]) / delta_y**2
+
+                ds_subset_fields_tlm[var].data = field_new.copy()
+
             else:
-                raise ValueError(f"eval_sqrt_prior_C_inv_action: Issue with {var}. Prior action only works for scalar, or 2D and 3D fields.")
+                raise ValueError(f"eval_sqrt_prior_C_inv_action: Issue with {var}. Prior action only works for scalar or 2D or 3D or 2DT fields.")
 
         dict_tlm_action_only_fields_vals = {}
         for var in ds_subset_fields_tlm:
@@ -925,6 +968,62 @@ class DataAssimilation:
                             bracket = field[kc] + gamma*(result[kc-1] / delta_z[kc-1] + result_old[kc+1] / delta_z[kc])*(2.0/(delta_z[kc]+delta_z[kc-1]))
 
                         result[kc] = (1 - self.OMEGA_SOR) * result_old[kc] + self.OMEGA_SOR / diagonal * bracket
+
+                    result_old = result.copy()
+
+                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2DT" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
+
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
+                delta_x = self.delta_x
+                delta_y = self.delta_y
+                IMAX = self.IMAX
+                JMAX = self.JMAX
+                NTDAMAX = self.NTDAMAX
+
+                field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+
+                result_old = np.copy(field)
+                result = np.copy(field)
+
+                for _ in range(self.MAX_ITERS_SOR):
+
+                    for tad in range(NTDAMAX):
+
+                        for j in range(JMAX+1):
+                            for i in range(IMAX+1):
+
+                                if j == 0 and i == 0:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[tad, 0, 0] + gamma*(result_old[tad, 0, 1] / delta_x**2 + result_old[tad, 1, 0] / delta_y**2)
+                                elif j == JMAX and i == 0:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[tad, JMAX, 0] + gamma*(result_old[tad, JMAX, 1] / delta_x**2 + result[tad, JMAX-1, 0] / delta_y**2)
+                                elif j == 0 and i == IMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[tad, 0, IMAX] + gamma*(result[tad, 0, IMAX-1] / delta_x**2 + result_old[tad, 1, IMAX] / delta_y**2)
+                                elif j == JMAX and i == IMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[tad, JMAX, IMAX] + gamma*(result[tad, JMAX, IMAX-1] / delta_x**2 + result[tad, JMAX-1, IMAX] / delta_y**2)
+                                elif i == 0:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                    bracket = field[tad, j, 0] + gamma*((result[tad, j-1, 0] + result_old[tad, j+1, 0]) / delta_y**2 + result_old[tad, j, 1] / delta_x**2)
+                                elif i == IMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                    bracket = field[tad, j, IMAX] + gamma*((result[tad, j-1, IMAX] + result_old[tad, j+1, IMAX]) / delta_y**2 + result[tad, j, IMAX-1] / delta_x**2)
+                                elif j == 0:
+                                    diagonal = delta + gamma*(2/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[tad, 0, i] + gamma*(result_old[tad, 1, i] / delta_y**2 + (result[tad, 0, i-1] + result_old[tad, 0, i+1]) / delta_x**2)
+                                elif j == JMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                    bracket = field[tad, JMAX, i] + gamma*(result[tad, JMAX-1, i] / delta_y**2 + (result[tad, JMAX, i-1] + result_old[tad, JMAX, i+1]) / delta_x**2)
+                                else:
+                                    diagonal = delta + 2*gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[tad, j, i] + gamma*((result[tad, j-1, i] + result_old[tad, j+1, i]) / delta_y**2 + (result[tad, j, i-1] + result_old[tad, j, i+1]) / delta_x**2)
+
+                                result[tad, j, i] = (1 - self.OMEGA_SOR) * result_old[tad, j, i] + self.OMEGA_SOR / diagonal * bracket
 
                     result_old = result.copy()
 
