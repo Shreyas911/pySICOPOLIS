@@ -8,7 +8,7 @@ from pySICOPOLIS.backend.types import VectorNumpy, MatrixNumpy, TensorNumpy
 
 from pySICOPOLIS.utils.data.dataCleaner import *
 
-__all__ = ['correctAgeDataset', 'interpToModelGrid']
+__all__ = ['correctAgeDataset', 'interpToModelGrid', 'interpToModelGrid2D', 'find_alpha', 'interpolate_nans']
 
 def correctAgeDataset(ds_age: Dataset,
                       path: Optional[str] = None,
@@ -224,14 +224,38 @@ def interpToModelGrid(ds_age_correct: Dataset,
     """
 
     # Interpolate horizontally on to model grid
-    ds_model = ds_age_correct.interp(xData=xModel, 
+    ds_model = ds_age_correct.interp(xData=xModel,
                                      yData=yModel,
-                                     method = hor_interp_method)
+                                     method = "linear")
+    ds_model["age_c_uncert_manual"] = ds_model["age_c_uncert"].copy()
+    ds_model["age_c_uncert_real_manual"] = ds_model["age_c_uncert_real"].copy()
+    ds_model["age_c_manual"] = ds_model["age_c"].copy()
+
     # Rename x and y dimensions
     ds_model = ds_model.rename({'xData':'xModel', 
                                 'yData':'yModel', 
                                 'z_minus_zbData': 'z_minus_zbModel'})
-    
+
+    for j in range(len(ds_model["yModel"].data)):
+        for i in range(len(ds_model["xModel"].data)):
+
+            j_data, alpha_y = find_alpha(ds_age_correct["yData"].data, ds_model["yModel"].data[j])
+            i_data, alpha_x = find_alpha(ds_age_correct["xData"].data, ds_model["xModel"].data[i])
+
+            if alpha_x is not None and alpha_y is not None:
+                ds_model["age_c_uncert_manual"].data[:, j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds_age_correct["age_c_uncert"].data[:, j_data+1, i_data+1]**2\
+                                                              + (1-alpha_y)**2*alpha_x**2*ds_age_correct["age_c_uncert"].data[:, j_data, i_data+1]**2\
+                                                              + alpha_y**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert"].data[:, j_data+1, i_data]**2\
+                                                              + (1-alpha_y)**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert"].data[:, j_data, i_data]**2)
+                ds_model["age_c_uncert_real_manual"].data[:, j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds_age_correct["age_c_uncert_real"].data[:, j_data+1, i_data+1]**2\
+                                                                   + (1-alpha_y)**2*alpha_x**2*ds_age_correct["age_c_uncert_real"].data[:, j_data, i_data+1]**2\
+                                                                   + alpha_y**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert_real"].data[:, j_data+1, i_data]**2\
+                                                                   + (1-alpha_y)**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert_real"].data[:, j_data, i_data]**2)
+                ds_model["age_c_manual"].data[:, j, i] = alpha_y*alpha_x*ds_age_correct["age_c"].data[:, j_data+1, i_data+1]\
+                                                       + (1-alpha_y)*alpha_x*ds_age_correct["age_c"].data[:, j_data, i_data+1]\
+                                                       + alpha_y*(1-alpha_x)*ds_age_correct["age_c"].data[:, j_data+1, i_data]\
+                                                       + (1-alpha_y)*(1-alpha_x)*ds_age_correct["age_c"].data[:, j_data, i_data]
+
     # DataArray for x-coordinate
     da_x = xr.DataArray(
         data = np.tile(xModel, (yModel.shape[0],1)),
@@ -264,86 +288,33 @@ def interpToModelGrid(ds_age_correct: Dataset,
 
     ## First interpolate the in-between NaNs
     ds_model = ds_model.interpolate_na(dim="zetaData", method = ver_interp_method)
+
+    for j in range(len(ds_model["yModel"].data)):
+        for i in range(len(ds_model["xModel"].data)):
+            ds_model["age_c_uncert_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_uncert_manual"].data[:, j, i], bool_uncert = True)
+            ds_model["age_c_uncert_real_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_uncert_real_manual"].data[:, j, i], bool_uncert = True)
+            ds_model["age_c_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_manual"].data[:, j, i], bool_uncert = False)
+
     ## Interpolate on to zeta_c grid
+    ds_model_old = ds_model.copy()
     ds_model = ds_model.interp(zetaData=sigma_levelModel*temp, method = ver_interp_method)
+
+    for kc in range(len(ds_model["zetaData"].data)):
+
+            kc_old, alpha_z = find_alpha(ds_model_old["zetaData"].data, ds_model["zetaData"].data[kc])
+
+            if kc_old is not None:
+                ds_model["age_c_uncert_manual"].data[kc] = np.sqrt(alpha_z**2*ds_model_old["age_c_uncert"].data[kc_old+1]**2\
+                                                         + (1-alpha_z)**2*ds_model_old["age_c_uncert"].data[kc_old]**2)
+                ds_model["age_c_uncert_real_manual"].data[kc] = np.sqrt(alpha_z**2*ds_model_old["age_c_uncert_real"].data[kc_old+1]**2\
+                                                              + (1-alpha_z)**2*ds_model_old["age_c_uncert_real"].data[kc_old]**2)
+                ds_model["age_c_manual"].data[kc] = alpha_z*ds_model_old["age_c"].data[kc_old+1]\
+                                                  + (1-alpha_z)*ds_model_old["age_c"].data[kc_old]
+
     ## Rename z-dimension
     ds_model = ds_model.rename({'zetaData':'sigma_levelModel'})
     ## Scale back to between 0 and 1
     ds_model['sigma_levelModel'] = ds_model['sigma_levelModel'] / temp
-
-    # Smooth age data in 2D fashion
-    age_smooth2D = np.zeros(ds_model['age_c'].data.shape)
-
-    for k in range(age_smooth2D.shape[0]):
-        age_smooth2D[k] = gaussian_filter_withNaNs(ds_model['age_c'].data[k],
-                                                   **kwargs)
-    
-    # DataArray for smoothed (2D fashion) age layer data
-    da_age_smooth2D = xr.DataArray(
-        data = age_smooth2D,
-        dims = ["sigma_levelModel", "yModel", "xModel"],
-        coords = dict(
-            sigma_levelModel = ds_model["sigma_levelModel"].data,
-            yModel      = ds_model["yModel"].data,
-            xModel      = ds_model["xModel"].data
-        ),
-        attrs = dict(description="Age smoothed 2D-wise",
-                     metadata=str(kwargs)),
-    )
-
-    # Smooth age data, whole 3D field at once, tends to be less realistic
-    age_smooth3D = gaussian_filter_withNaNs(ds_model['age_c'].data,
-                                            **kwargs)
-
-    # DataArray for smoothed (3D fashion) age layer data
-    da_age_smooth3D = xr.DataArray(
-        data = age_smooth3D,
-        dims = ["sigma_levelModel", "yModel", "xModel"],
-        coords = dict(
-            sigma_levelModel = ds_model["sigma_levelModel"].data,
-            yModel      = ds_model["yModel"].data,
-            xModel      = ds_model["xModel"].data
-        ),
-        attrs = dict(description="Age smoothed 3D field at once",
-                     metadata=str(kwargs)),
-    )
-
-    age_uncert_smooth2D_fake = 0.1*age_smooth2D
-    age_uncert_smooth2D_fake[age_uncert_smooth2D_fake <= 1.0] = 1.0
-    age_uncert_smooth3D_fake = 0.1*age_smooth3D
-    age_uncert_smooth3D_fake[age_uncert_smooth3D_fake <= 1.0] = 1.0
-
-    # DataArray for smoothed (2D fashion) age uncertainty data
-    da_age_uncert_smooth2D = xr.DataArray(
-        data = age_uncert_smooth2D_fake,
-        dims = ["sigma_levelModel", "yModel", "xModel"],
-        coords = dict(
-            sigma_levelModel = ds_model["sigma_levelModel"].data,
-            yModel      = ds_model["yModel"].data,
-            xModel      = ds_model["xModel"].data
-        ),
-        attrs = dict(description="Fake age uncertainty smoothed 2D-wise",
-                     metadata=str(kwargs)),
-    )
-
-    # DataArray for smoothed (2D fashion) age uncertainty data
-    da_age_uncert_smooth3D = xr.DataArray(
-        data = age_uncert_smooth3D_fake,
-        dims = ["sigma_levelModel", "yModel", "xModel"],
-        coords = dict(
-            sigma_levelModel = ds_model["sigma_levelModel"].data,
-            yModel      = ds_model["yModel"].data,
-            xModel      = ds_model["xModel"].data
-        ),
-        attrs = dict(description="Fake age uncertainty smoothed 3D-wise",
-                     metadata=str(kwargs)),
-    )
-
-    # Assign smoothed age fields to ds_model
-    ds_model = ds_model.assign(age_c_smooth2D = da_age_smooth2D, 
-                               age_c_smooth3D = da_age_smooth3D,
-                               age_c_uncert_smooth2D = da_age_uncert_smooth2D,
-                               age_c_uncert_smooth3D = da_age_uncert_smooth3D,)
 
     # Replace all NaNs with -999.0
     ds_model = ds_model.fillna(replace_nans_with)
@@ -357,7 +328,6 @@ def interpToModelGrid(ds_age_correct: Dataset,
 def interpToModelGrid2D(ds: Dataset,
                         xModel: VectorNumpy,
                         yModel: VectorNumpy,
-                        hor_interp_method: str = 'nearest',
                         replace_nans_with: float = -999.0,
                         path: Optional[str] = None,
                         filename: Optional[str] = None) -> Dataset:
@@ -375,8 +345,6 @@ def interpToModelGrid2D(ds: Dataset,
         y co-ordinates for model
     sigma_levelModel : numpy 1D array
         Normalized z-co-ordinates for model
-    hor_interp_method : str
-        Method for horizontal interpolation, default 'nearest'
     replace_nans_with : float
         Replace NaNs with this float
     path : str or None
@@ -387,16 +355,37 @@ def interpToModelGrid2D(ds: Dataset,
 
     ds = ds.rename({"thickness": "H", "errbed": "H_uncert", "bed": "zl", "surface": "zs"})
     ds["zl_uncert"] = ds["H_uncert"].copy()
-    ds["zs_uncert"] = ds["H_uncert"].copy()*0.0 + 5.0
+    ds["zs_uncert"] = ds["H_uncert"].copy()*0.0 + 10.0
 
     # Interpolate horizontally on to model grid
     ds_model = ds.interp(x=xModel, 
                          y=yModel,
-                         method = hor_interp_method)
+                         method = "linear")
+    ds_model["H_uncert_manual"] = ds_model["H_uncert"].copy()
+    ds_model["H_manual"] = ds_model["H"].copy()
+
     # Rename x and y dimensions
     ds_model = ds_model.rename({'x':'xModel', 
                                 'y':'yModel'})
-    
+
+    for j in range(len(ds_model["yModel"].data)):
+        for i in range(len(ds_model["xModel"].data)):
+
+            j_data, alpha_y = find_alpha(ds["y"].data, ds_model["yModel"].data[j])
+            i_data, alpha_x = find_alpha(ds["x"].data, ds_model["xModel"].data[i])
+
+            if alpha_x is not None and alpha_y is not None:
+                ds_model["H_uncert_manual"].data[j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds["H_uncert"].data[j_data+1, i_data+1]**2\
+                                                       + (1-alpha_y)**2*alpha_x**2*ds["H_uncert"].data[j_data, i_data+1]**2\
+                                                       + alpha_y**2*(1-alpha_x)**2*ds["H_uncert"].data[j_data+1, i_data]**2\
+                                                       + (1-alpha_y)**2*(1-alpha_x)**2*ds["H_uncert"].data[j_data, i_data]**2)
+                ds_model["H_manual"].data[j, i] = alpha_y*alpha_x*ds["H"].data[j_data+1, i_data+1]\
+                                                + (1-alpha_y)*alpha_x*ds["H"].data[j_data, i_data+1]\
+                                                + alpha_y*(1-alpha_x)*ds["H"].data[j_data+1, i_data]\
+                                                + (1-alpha_y)*(1-alpha_x)*ds["H"].data[j_data, i_data]
+
+    ds_model["zl_uncert_manual"] = ds_model["H_uncert_manual"].copy()
+
     # DataArray for x-coordinate
     da_x = xr.DataArray(
         data = np.tile(xModel, (yModel.shape[0],1)),
@@ -430,3 +419,61 @@ def interpToModelGrid2D(ds: Dataset,
 
     return ds_model
 
+def find_alpha(arr: VectorNumpy, x: float):
+    """
+    Given a sorted increasing/decreasing array and a value x,
+    find the two values that straddle x and compute alpha.
+
+    Parameters:
+        arr (list): A sorted list of numbers.
+        x (float): The target value.
+
+    Returns:
+        (int, float): Tuple containing (lower_idx, alpha).
+    """
+
+    for i in range(len(arr) - 1):
+        if arr[i] <= x <= arr[i + 1] or arr[i] >= x >= arr[i + 1]:
+            x_low, x_high = arr[i], arr[i + 1]
+            alpha = (x - x_low) / (x_high - x_low)
+            return i, alpha
+
+    return None, None  # Can reach here near the boundary edges
+
+def interpolate_nans(arr, bool_uncert):
+    """
+    Linearly interpolates NaN values in a NumPy array without extrapolating.
+
+    Parameters:
+        arr (numpy.ndarray): Input array containing NaN values.
+        bool_uncert (bool): Is the arr an uncert field? If so, variances are additive, not std. deviations.
+
+    Returns:
+        tuple: (Interpolated array, Dictionary of interpolation weights)
+    """
+
+    arr = np.asarray(arr, dtype=np.float64)  # Ensure it's a float array
+    x = np.arange(len(arr))
+    valid = ~np.isnan(arr)
+    nan_indices = np.where(np.isnan(arr))[0]
+
+    arr_interp = np.copy(arr)
+
+    for i in nan_indices:
+        # Find the nearest valid points on both sides
+        left = np.max(x[valid & (x < i)], initial=-1)
+        right = np.min(x[valid & (x > i)], initial=len(arr))
+
+        # Ensure both left and right exist for interpolation
+        if left != -1 and right != len(arr):
+            y1, y2 = arr[left], arr[right]
+            w1 = (right - i) / (right - left)
+            w2 = (i - left) / (right - left)
+
+            # Apply interpolation
+            if not bool_uncert:
+                arr_interp[i] = w1 * y1 + w2 * y2
+            else:
+                arr_interp[i] = np.sqrt(w1**2*y1**2 + w2**2*y2**2)
+
+    return arr_interp
