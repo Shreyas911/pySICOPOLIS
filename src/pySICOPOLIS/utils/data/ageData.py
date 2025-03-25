@@ -1,6 +1,7 @@
 import netCDF4 as nc
 import numpy as np
 import xarray as xr
+from scipy.ndimage import gaussian_filter
 
 from pySICOPOLIS.backend.types import Dataset, DataArray
 from pySICOPOLIS.backend.types import Optional, OptionalList
@@ -189,8 +190,10 @@ def interpToModelGrid(ds_age_correct: Dataset,
                       xModel: VectorNumpy,
                       yModel: VectorNumpy,
                       sigma_levelModel: VectorNumpy,
-                      hor_interp_method: str = 'nearest',
-                      ver_interp_method: str = 'linear',
+                      hor_interp_method: str,
+                      ver_interp_method: str,
+                      bool_gausian_smoothing_before: bool = False,
+                      sigma_gs: float = 1.25,
                       replace_nans_with: float = -999.0,
                       path: Optional[str] = None,
                       filename: Optional[str] = None,
@@ -210,9 +213,13 @@ def interpToModelGrid(ds_age_correct: Dataset,
     sigma_levelModel : numpy 1D array
         Normalized z-co-ordinates for model
     hor_interp_method : str
-        Method for horizontal interpolation, default 'nearest'
+        Method for horizontal interpolation
     ver_interp_method : str
-        Method for vertical interpolation, default 'nearest'
+        Method for vertical interpolation
+    bool_gausian_smoothing_before : bool
+        Gaussian smoothing before interpolation?
+    sigma_gs: float
+        Sigma for Gaussian smoothing, default value is such that +- 4 sigma is +- 5kms
     replace_nans_with : float
         Replace NaNs with this float
     path : str or None
@@ -223,38 +230,72 @@ def interpToModelGrid(ds_age_correct: Dataset,
         Passed to scipy.ndimage.gaussian_filter
     """
 
+    def gaussian_filter_nan(array):
+        """Applies Gaussian filter while ignoring NaNs."""
+        nan_mask = np.isnan(array)  # Identify NaNs
+
+        # Replace NaNs with 0 temporarily
+        array_filled = np.where(nan_mask, 0, array)
+
+        # Apply Gaussian filter to the data only along x and y axes
+        if len(array.shape) == 3:
+            filtered = gaussian_filter(array_filled, sigma=[0, sigma_gs, sigma_gs], mode="nearest")
+        elif len(array.shape) == 2:
+            filtered = gaussian_filter(array_filled, sigma=sigma_gs, mode="nearest")
+
+        # Create a weight mask (1 where valid data, 0 where NaNs)
+        weight_mask = np.where(nan_mask, 0, 1).astype(float)  # Converts True/False → 1.0/0.0
+        if len(array.shape) == 3:
+            weight = gaussian_filter(weight_mask, sigma=[0, 1.25, 1.25], mode="nearest")
+        elif  len(array.shape) == 2:
+            weight = gaussian_filter(weight_mask, sigma=1.25, mode="nearest")
+
+        # Normalize the filtered data
+        filtered /= weight
+        filtered[nan_mask] = np.nan  # Restore NaNs
+
+        return filtered
+
+    if bool_gausian_smoothing_before:
+        for var in ds_age_correct.data_vars:
+            if ds_age_correct[var].dtype.kind in "fi":  # Process only float/int data (skip categorical or boolean)
+                ds_age_correct[var].data = gaussian_filter_nan(ds_age_correct[var].data.copy())
+
     # Interpolate horizontally on to model grid
     ds_model = ds_age_correct.interp(xData=xModel,
                                      yData=yModel,
-                                     method = "linear")
-    ds_model["age_c_uncert_manual"] = ds_model["age_c_uncert"].copy()
-    ds_model["age_c_uncert_real_manual"] = ds_model["age_c_uncert_real"].copy()
-    ds_model["age_c_manual"] = ds_model["age_c"].copy()
+                                     method = hor_interp_method)
 
-    # Rename x and y dimensions
-    ds_model = ds_model.rename({'xData':'xModel', 
-                                'yData':'yModel', 
-                                'z_minus_zbData': 'z_minus_zbModel'})
+    if hor_interp_method == "linear" and ver_interp_method == "linear":
 
-    for j in range(len(ds_model["yModel"].data)):
-        for i in range(len(ds_model["xModel"].data)):
+        ds_model["age_c_uncert_manual"] = ds_model["age_c_uncert"].copy()
+        ds_model["age_c_uncert_real_manual"] = ds_model["age_c_uncert_real"].copy()
+        ds_model["age_c_manual"] = ds_model["age_c"].copy()
 
-            j_data, alpha_y = find_alpha(ds_age_correct["yData"].data, ds_model["yModel"].data[j])
-            i_data, alpha_x = find_alpha(ds_age_correct["xData"].data, ds_model["xModel"].data[i])
+        # Rename x and y dimensions
+        ds_model = ds_model.rename({'xData':'xModel',
+                                    'yData':'yModel',
+                                    'z_minus_zbData': 'z_minus_zbModel'})
 
-            if alpha_x is not None and alpha_y is not None:
-                ds_model["age_c_uncert_manual"].data[:, j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds_age_correct["age_c_uncert"].data[:, j_data+1, i_data+1]**2\
-                                                              + (1-alpha_y)**2*alpha_x**2*ds_age_correct["age_c_uncert"].data[:, j_data, i_data+1]**2\
-                                                              + alpha_y**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert"].data[:, j_data+1, i_data]**2\
-                                                              + (1-alpha_y)**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert"].data[:, j_data, i_data]**2)
-                ds_model["age_c_uncert_real_manual"].data[:, j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds_age_correct["age_c_uncert_real"].data[:, j_data+1, i_data+1]**2\
-                                                                   + (1-alpha_y)**2*alpha_x**2*ds_age_correct["age_c_uncert_real"].data[:, j_data, i_data+1]**2\
-                                                                   + alpha_y**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert_real"].data[:, j_data+1, i_data]**2\
-                                                                   + (1-alpha_y)**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert_real"].data[:, j_data, i_data]**2)
-                ds_model["age_c_manual"].data[:, j, i] = alpha_y*alpha_x*ds_age_correct["age_c"].data[:, j_data+1, i_data+1]\
-                                                       + (1-alpha_y)*alpha_x*ds_age_correct["age_c"].data[:, j_data, i_data+1]\
-                                                       + alpha_y*(1-alpha_x)*ds_age_correct["age_c"].data[:, j_data+1, i_data]\
-                                                       + (1-alpha_y)*(1-alpha_x)*ds_age_correct["age_c"].data[:, j_data, i_data]
+        for j in range(len(ds_model["yModel"].data)):
+            for i in range(len(ds_model["xModel"].data)):
+
+                j_data, alpha_y = find_alpha(ds_age_correct["yData"].data, ds_model["yModel"].data[j])
+                i_data, alpha_x = find_alpha(ds_age_correct["xData"].data, ds_model["xModel"].data[i])
+
+                if alpha_x is not None and alpha_y is not None:
+                    ds_model["age_c_uncert_manual"].data[:, j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds_age_correct["age_c_uncert"].data[:, j_data+1, i_data+1]**2\
+                                                                  + (1-alpha_y)**2*alpha_x**2*ds_age_correct["age_c_uncert"].data[:, j_data, i_data+1]**2\
+                                                                  + alpha_y**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert"].data[:, j_data+1, i_data]**2\
+                                                                  + (1-alpha_y)**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert"].data[:, j_data, i_data]**2)
+                    ds_model["age_c_uncert_real_manual"].data[:, j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds_age_correct["age_c_uncert_real"].data[:, j_data+1, i_data+1]**2\
+                                                                       + (1-alpha_y)**2*alpha_x**2*ds_age_correct["age_c_uncert_real"].data[:, j_data, i_data+1]**2\
+                                                                       + alpha_y**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert_real"].data[:, j_data+1, i_data]**2\
+                                                                       + (1-alpha_y)**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert_real"].data[:, j_data, i_data]**2)
+                    ds_model["age_c_manual"].data[:, j, i] = alpha_y*alpha_x*ds_age_correct["age_c"].data[:, j_data+1, i_data+1]\
+                                                           + (1-alpha_y)*alpha_x*ds_age_correct["age_c"].data[:, j_data, i_data+1]\
+                                                           + alpha_y*(1-alpha_x)*ds_age_correct["age_c"].data[:, j_data+1, i_data]\
+                                                           + (1-alpha_y)*(1-alpha_x)*ds_age_correct["age_c"].data[:, j_data, i_data]
 
     # DataArray for x-coordinate
     da_x = xr.DataArray(
@@ -289,17 +330,21 @@ def interpToModelGrid(ds_age_correct: Dataset,
     ## First interpolate the in-between NaNs
     ds_model = ds_model.interpolate_na(dim="zetaData", method = ver_interp_method)
 
-    for j in range(len(ds_model["yModel"].data)):
-        for i in range(len(ds_model["xModel"].data)):
-            ds_model["age_c_uncert_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_uncert_manual"].data[:, j, i], bool_uncert = True)
-            ds_model["age_c_uncert_real_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_uncert_real_manual"].data[:, j, i], bool_uncert = True)
-            ds_model["age_c_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_manual"].data[:, j, i], bool_uncert = False)
+    if hor_interp_method == "linear" and ver_interp_method == "linear":
+
+        for j in range(len(ds_model["yModel"].data)):
+            for i in range(len(ds_model["xModel"].data)):
+                ds_model["age_c_uncert_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_uncert_manual"].data[:, j, i], bool_uncert = True)
+                ds_model["age_c_uncert_real_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_uncert_real_manual"].data[:, j, i], bool_uncert = True)
+                ds_model["age_c_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_manual"].data[:, j, i], bool_uncert = False)
 
     ## Interpolate on to zeta_c grid
     ds_model_old = ds_model.copy()
     ds_model = ds_model.interp(zetaData=sigma_levelModel*temp, method = ver_interp_method)
 
-    for kc in range(len(ds_model["zetaData"].data)):
+    if hor_interp_method == "linear" and ver_interp_method == "linear":
+
+        for kc in range(len(ds_model["zetaData"].data)):
 
             kc_old, alpha_z = find_alpha(ds_model_old["zetaData"].data, ds_model["zetaData"].data[kc])
 
@@ -328,13 +373,15 @@ def interpToModelGrid(ds_age_correct: Dataset,
 def interpToModelGrid2D(ds: Dataset,
                         xModel: VectorNumpy,
                         yModel: VectorNumpy,
+                        hor_interp_method: str,
+                        bool_gausian_smoothing_before: bool = False,
+                        sigma_gs: float = 12.5,
                         replace_nans_with: float = -999.0,
                         path: Optional[str] = None,
                         filename: Optional[str] = None) -> Dataset:
 
     """
-    Create corrected age dataset, with z-coord from bottom to top.
-    The coords for the dataArrays are generally x and y instead of indices.
+    For BM5 dataset, interpolation function.
     Parameters
     ----------
     ds : Dataset
@@ -343,8 +390,12 @@ def interpToModelGrid2D(ds: Dataset,
         x co-ordinates for model
     yModel : numpy 1D array
         y co-ordinates for model
-    sigma_levelModel : numpy 1D array
-        Normalized z-co-ordinates for model
+    hor_interp_method : str
+        Method for horizontal interpolation
+    bool_gausian_smoothing_before : bool
+        Gaussian smoothing before interpolation?
+    sigma_gs: float
+        Sigma for Gaussian smoothing, default value is such that +- 4 sigma is +- 5kms
     replace_nans_with : float
         Replace NaNs with this float
     path : str or None
@@ -357,34 +408,54 @@ def interpToModelGrid2D(ds: Dataset,
     ds["zl_uncert"] = ds["H_uncert"].copy()
     ds["zs_uncert"] = ds["H_uncert"].copy()*0.0 + 10.0
 
+    if bool_gausian_smoothing_before:
+        for var in ds.data_vars:
+            if ds[var].dtype.kind in "fi":  # Process only float/int data (skip categorical or boolean)
+                ds[var].data = gaussian_filter(ds[var].data.copy(), sigma=sigma_gs, mode="nearest")
+
     # Interpolate horizontally on to model grid
     ds_model = ds.interp(x=xModel, 
                          y=yModel,
-                         method = "linear")
-    ds_model["H_uncert_manual"] = ds_model["H_uncert"].copy()
-    ds_model["H_manual"] = ds_model["H"].copy()
+                         method = hor_interp_method)
 
-    # Rename x and y dimensions
-    ds_model = ds_model.rename({'x':'xModel', 
-                                'y':'yModel'})
+    if hor_interp_method == "linear":
 
-    for j in range(len(ds_model["yModel"].data)):
-        for i in range(len(ds_model["xModel"].data)):
+        ds_model["H_uncert_manual"] = ds_model["H_uncert"].copy()
+        ds_model["zs_uncert_manual"] = ds_model["zs_uncert"].copy()
+        ds_model["zl_uncert_manual"] = ds_model["zl_uncert"].copy()
+        ds_model["H_manual"] = ds_model["H"].copy()
+        ds_model["zs_manual"] = ds_model["zs"].copy()
+        ds_model["zl_manual"] = ds_model["zl"].copy()
 
-            j_data, alpha_y = find_alpha(ds["y"].data, ds_model["yModel"].data[j])
-            i_data, alpha_x = find_alpha(ds["x"].data, ds_model["xModel"].data[i])
+        # Rename x and y dimensions
+        ds_model = ds_model.rename({'x':'xModel',
+                                    'y':'yModel'})
 
-            if alpha_x is not None and alpha_y is not None:
-                ds_model["H_uncert_manual"].data[j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds["H_uncert"].data[j_data+1, i_data+1]**2\
-                                                       + (1-alpha_y)**2*alpha_x**2*ds["H_uncert"].data[j_data, i_data+1]**2\
-                                                       + alpha_y**2*(1-alpha_x)**2*ds["H_uncert"].data[j_data+1, i_data]**2\
-                                                       + (1-alpha_y)**2*(1-alpha_x)**2*ds["H_uncert"].data[j_data, i_data]**2)
-                ds_model["H_manual"].data[j, i] = alpha_y*alpha_x*ds["H"].data[j_data+1, i_data+1]\
-                                                + (1-alpha_y)*alpha_x*ds["H"].data[j_data, i_data+1]\
-                                                + alpha_y*(1-alpha_x)*ds["H"].data[j_data+1, i_data]\
-                                                + (1-alpha_y)*(1-alpha_x)*ds["H"].data[j_data, i_data]
+        for j in range(len(ds_model["yModel"].data)):
+            for i in range(len(ds_model["xModel"].data)):
 
-    ds_model["zl_uncert_manual"] = ds_model["H_uncert_manual"].copy()
+                j_data, alpha_y = find_alpha(ds["y"].data, ds_model["yModel"].data[j])
+                i_data, alpha_x = find_alpha(ds["x"].data, ds_model["xModel"].data[i])
+
+                if alpha_x is not None and alpha_y is not None:
+                    ds_model["H_uncert_manual"].data[j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds["H_uncert"].data[j_data+1, i_data+1]**2\
+                                                           + (1-alpha_y)**2*alpha_x**2*ds["H_uncert"].data[j_data, i_data+1]**2\
+                                                           + alpha_y**2*(1-alpha_x)**2*ds["H_uncert"].data[j_data+1, i_data]**2\
+                                                           + (1-alpha_y)**2*(1-alpha_x)**2*ds["H_uncert"].data[j_data, i_data]**2)
+                    ds_model["H_manual"].data[j, i] = alpha_y*alpha_x*ds["H"].data[j_data+1, i_data+1]\
+                                                    + (1-alpha_y)*alpha_x*ds["H"].data[j_data, i_data+1]\
+                                                    + alpha_y*(1-alpha_x)*ds["H"].data[j_data+1, i_data]\
+                                                    + (1-alpha_y)*(1-alpha_x)*ds["H"].data[j_data, i_data]
+                    ds_model["zs_manual"].data[j, i] = alpha_y*alpha_x*ds["zs"].data[j_data+1, i_data+1]\
+                                                    + (1-alpha_y)*alpha_x*ds["zs"].data[j_data, i_data+1]\
+                                                    + alpha_y*(1-alpha_x)*ds["zs"].data[j_data+1, i_data]\
+                                                    + (1-alpha_y)*(1-alpha_x)*ds["zs"].data[j_data, i_data]
+                    ds_model["zl_manual"].data[j, i] = alpha_y*alpha_x*ds["zl"].data[j_data+1, i_data+1]\
+                                                    + (1-alpha_y)*alpha_x*ds["zl"].data[j_data, i_data+1]\
+                                                    + alpha_y*(1-alpha_x)*ds["zl"].data[j_data+1, i_data]\
+                                                    + (1-alpha_y)*(1-alpha_x)*ds["zl"].data[j_data, i_data]
+
+        ds_model["zl_uncert_manual"] = ds_model["H_uncert_manual"].copy()
 
     # DataArray for x-coordinate
     da_x = xr.DataArray(
