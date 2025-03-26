@@ -266,7 +266,7 @@ def interpToModelGrid(ds_age_correct: Dataset,
                                      yData=yModel,
                                      method = hor_interp_method)
 
-    if hor_interp_method == "linear" and ver_interp_method == "linear":
+    if hor_interp_method == "linear" and ver_interp_method == "linear" and not bool_gausian_smoothing_before:
 
         ds_model["age_c_uncert_manual"] = ds_model["age_c_uncert"].copy()
         ds_model["age_c_uncert_real_manual"] = ds_model["age_c_uncert_real"].copy()
@@ -330,7 +330,7 @@ def interpToModelGrid(ds_age_correct: Dataset,
     ## First interpolate the in-between NaNs
     ds_model = ds_model.interpolate_na(dim="zetaData", method = ver_interp_method)
 
-    if hor_interp_method == "linear" and ver_interp_method == "linear":
+    if hor_interp_method == "linear" and ver_interp_method == "linear" and not bool_gausian_smoothing_before:
 
         for j in range(len(ds_model["yModel"].data)):
             for i in range(len(ds_model["xModel"].data)):
@@ -342,7 +342,7 @@ def interpToModelGrid(ds_age_correct: Dataset,
     ds_model_old = ds_model.copy()
     ds_model = ds_model.interp(zetaData=sigma_levelModel*temp, method = ver_interp_method)
 
-    if hor_interp_method == "linear" and ver_interp_method == "linear":
+    if hor_interp_method == "linear" and ver_interp_method == "linear" and not bool_gausian_smoothing_before:
 
         for kc in range(len(ds_model["zetaData"].data)):
 
@@ -418,7 +418,7 @@ def interpToModelGrid2D(ds: Dataset,
                          y=yModel,
                          method = hor_interp_method)
 
-    if hor_interp_method == "linear":
+    if hor_interp_method == "linear" and not bool_gausian_smoothing_before:
 
         ds_model["H_uncert_manual"] = ds_model["H_uncert"].copy()
         ds_model["zs_uncert_manual"] = ds_model["zs_uncert"].copy()
