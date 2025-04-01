@@ -35,7 +35,7 @@ class DataAssimilation:
                  MAX_ITERS_SOR: int = 100,
                  OMEGA_SOR: float = 1.5,
                  list_fields_to_ignore: Optional[List[str]] = None,
-                 bool_surfvel_cost: bool = False,
+                 bool_vs_cost: bool = False,
                  filename_vx_vy_s_g: Optional[str] = None,
                  dirpath_store_states: Optional[str] = None,
                  num_prior_samples: Optional[int] = 1000,
@@ -107,13 +107,13 @@ class DataAssimilation:
 
         self.list_fields_to_ignore = list_fields_to_ignore
 
-        if bool_surfvel_cost and filename_vx_vy_s_g is None:
+        if bool_vs_cost and filename_vx_vy_s_g is None:
             raise ValueError("DataAssimilation: File to read terminal surface velocity field values not specified.")
         
-        if not bool_surfvel_cost and filename_vx_vy_s_g is not None:
+        if not bool_vs_cost and filename_vx_vy_s_g is not None:
             raise ValueError("DataAssimilation: File to read terminal surface velocity field values specified even when not needed.")
 
-        self.bool_surfvel_cost = bool_surfvel_cost
+        self.bool_vs_cost = bool_vs_cost
         self.filename_vx_vy_s_g = filename_vx_vy_s_g
         self.dirpath_store_states = dirpath_store_states
 
@@ -701,7 +701,7 @@ class DataAssimilation:
 
         ds_inp_fields_adj_action = self.open_xr_ds(self.dict_ad_inp_nc_files["adj_action"], False)
 
-        if self.bool_surfvel_cost:
+        if self.bool_vs_cost:
 
             vx_s_g_final, vy_s_g_final = self.get_vx_vy_s(self.filename_vx_vy_s_g)
 
