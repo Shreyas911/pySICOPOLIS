@@ -555,7 +555,7 @@ class DataAssimilation:
             if self.dirpath_store_states is not None:
 
                 with open(log_file, "a") as f:
-                    f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
+                    f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_{i+1}.nc")
 
@@ -1357,7 +1357,7 @@ class DataAssimilation:
 
             log_file = self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "inexact_gn_hessian_cg.log"
             with open(log_file, "a") as f:
-                f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
+                f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "state_GNHessCG_iter_0.nc")
 
@@ -1409,7 +1409,7 @@ class DataAssimilation:
             if self.dirpath_store_states is not None:
 
                 with open(log_file, "a") as f:
-                    f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
+                    f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}.nc")
 
@@ -1675,7 +1675,7 @@ class DataAssimilation:
 
             log_file = self.dirpath_store_states + "/l_bfgs/" + "l_bfgs.log"
             with open(log_file, "a") as f:
-                f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
+                f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + "state_LBFGS_iter_0.nc")
 
@@ -1746,7 +1746,7 @@ class DataAssimilation:
             if self.dirpath_store_states is not None:
 
                 with open(log_file, "a") as f:
-                    f.write(f"Iteration {k+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
+                    f.write(f"Iteration {k+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + f"state_LBFGS_iter_{k+1}.nc")
 
