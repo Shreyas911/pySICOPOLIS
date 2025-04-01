@@ -117,21 +117,6 @@ def correctAgeDataset(ds_age: Dataset,
         attrs=dict(description="Age in years, from bottom to top"),
     )
 
-    age_uncert_fake = 0.1*age
-    age_uncert_fake[age_uncert_fake <= 1.0] = 1.0
-
-    # DataArray for fake age uncertainty since the real one is corrupted
-    da_age_uncert_fake = xr.DataArray(
-        data = age_uncert_fake,
-        coords=dict(
-            z_minus_zbData = (["zetaData", "yData", "xData"], da_z_minus_zb.data),
-            yData = da_y.data[:,0],
-            xData = da_x.data[0]
-        ),
-        dims = ["zetaData", "yData", "xData"],
-        attrs=dict(description="Fake age uncertainty in years, from bottom to top"),
-    )
-
     # If uncorrupt, add age_uncert data as well
     if unCorrupt:
 
@@ -173,12 +158,11 @@ def correctAgeDataset(ds_age: Dataset,
                                            yMesh          = da_y,
                                            H              = da_H,
                                            z_minus_zbData = da_z_minus_zb,
-                                           age_c            = da_age,
-                                           age_c_uncert     = da_age_uncert_fake)
+                                           age_c            = da_age)
 
     # If uncorrupt, add age_uncert data as well
     if unCorrupt:
-        ds_age_correct = ds_age_correct.assign(age_c_uncert_real = da_age_uncert)
+        ds_age_correct = ds_age_correct.assign(age_c_uncert = da_age_uncert)
 
     # Write Dataset to NetCDF file
     if path and filename:
@@ -269,7 +253,6 @@ def interpToModelGrid(ds_age_correct: Dataset,
     if hor_interp_method == "linear" and ver_interp_method == "linear" and not bool_gausian_smoothing_before:
 
         ds_model["age_c_uncert_manual"] = ds_model["age_c_uncert"].copy()
-        ds_model["age_c_uncert_real_manual"] = ds_model["age_c_uncert_real"].copy()
         ds_model["age_c_manual"] = ds_model["age_c"].copy()
 
         # Rename x and y dimensions
@@ -288,10 +271,6 @@ def interpToModelGrid(ds_age_correct: Dataset,
                                                                   + (1-alpha_y)**2*alpha_x**2*ds_age_correct["age_c_uncert"].data[:, j_data, i_data+1]**2\
                                                                   + alpha_y**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert"].data[:, j_data+1, i_data]**2\
                                                                   + (1-alpha_y)**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert"].data[:, j_data, i_data]**2)
-                    ds_model["age_c_uncert_real_manual"].data[:, j, i] = np.sqrt(alpha_y**2*alpha_x**2*ds_age_correct["age_c_uncert_real"].data[:, j_data+1, i_data+1]**2\
-                                                                       + (1-alpha_y)**2*alpha_x**2*ds_age_correct["age_c_uncert_real"].data[:, j_data, i_data+1]**2\
-                                                                       + alpha_y**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert_real"].data[:, j_data+1, i_data]**2\
-                                                                       + (1-alpha_y)**2*(1-alpha_x)**2*ds_age_correct["age_c_uncert_real"].data[:, j_data, i_data]**2)
                     ds_model["age_c_manual"].data[:, j, i] = alpha_y*alpha_x*ds_age_correct["age_c"].data[:, j_data+1, i_data+1]\
                                                            + (1-alpha_y)*alpha_x*ds_age_correct["age_c"].data[:, j_data, i_data+1]\
                                                            + alpha_y*(1-alpha_x)*ds_age_correct["age_c"].data[:, j_data+1, i_data]\
@@ -335,7 +314,6 @@ def interpToModelGrid(ds_age_correct: Dataset,
         for j in range(len(ds_model["yModel"].data)):
             for i in range(len(ds_model["xModel"].data)):
                 ds_model["age_c_uncert_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_uncert_manual"].data[:, j, i], bool_uncert = True)
-                ds_model["age_c_uncert_real_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_uncert_real_manual"].data[:, j, i], bool_uncert = True)
                 ds_model["age_c_manual"].data[:, j, i] = interpolate_nans(ds_model["age_c_manual"].data[:, j, i], bool_uncert = False)
 
     ## Interpolate on to zeta_c grid
@@ -351,8 +329,6 @@ def interpToModelGrid(ds_age_correct: Dataset,
             if kc_old is not None:
                 ds_model["age_c_uncert_manual"].data[kc] = np.sqrt(alpha_z**2*ds_model_old["age_c_uncert"].data[kc_old+1]**2\
                                                          + (1-alpha_z)**2*ds_model_old["age_c_uncert"].data[kc_old]**2)
-                ds_model["age_c_uncert_real_manual"].data[kc] = np.sqrt(alpha_z**2*ds_model_old["age_c_uncert_real"].data[kc_old+1]**2\
-                                                              + (1-alpha_z)**2*ds_model_old["age_c_uncert_real"].data[kc_old]**2)
                 ds_model["age_c_manual"].data[kc] = alpha_z*ds_model_old["age_c"].data[kc_old+1]\
                                                   + (1-alpha_z)*ds_model_old["age_c"].data[kc_old]
 
