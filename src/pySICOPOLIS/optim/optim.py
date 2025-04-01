@@ -220,7 +220,7 @@ class DataAssimilation:
         self.remove_dir(self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
         self.ds_prior_X_fields.to_netcdf(self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
 
-        self.fc, self.fc_data, self.fc_reg = self.eval_cost()
+        self.ds_subset_costs = self.eval_costs()
 
     @beartype
     def create_ad_nodiff_or_adj_input_nc(self,
@@ -398,14 +398,11 @@ class DataAssimilation:
         return vx_s_g, vy_s_g
 
     @beartype
-    def eval_cost(self) -> Tuple[float, float, float]:
+    def eval_costs(self) -> Any:
 
         ds_out_fields_nodiff = self.run_exec(ad_key = "nodiff")
-        fc = ds_out_fields_nodiff['fc'].data[0]
-        fc_data = ds_out_fields_nodiff['fc_data'].data[0]
-        fc_reg = ds_out_fields_nodiff['fc_reg'].data[0]
 
-        return fc, fc_data, fc_reg
+        return self.subset_of_ds(ds_out_fields_nodiff, attr_key = "type", attr_value = "cost")
 
     @beartype
     def eval_params(self) -> Any:
@@ -471,13 +468,11 @@ class DataAssimilation:
                     ds_subset_descent_dir: Any,
                     init_alpha: float = 1.0,
                     min_alpha_tol: float = 1.e-10,
-                    c1: float = 1.e-4) -> Tuple[float, float, float, float]:
+                    c1: float = 1.e-4) -> Tuple[float, Any]:
     
         alpha = init_alpha
         ds_subset_params_orig = self.ds_subset_params.copy()
-        fc = self.fc
-        fc_data = self.fc_data
-        fc_reg = self.fc_reg
+        ds_subset_costs_orig = self.ds_subset_costs.copy()
 
         while True:
             
@@ -486,9 +481,9 @@ class DataAssimilation:
                                                        [1.0, alpha], ["nodiff", "adj"])
                 self.write_params(ds_subset_params_new)
         
-                fc_new, fc_data_new, fc_reg_new = self.eval_cost()
+                ds_subset_costs_new = self.eval_costs()
                 pTg = self.l2_inner_product([ds_subset_descent_dir, ds_subset_gradient], ["adj", "adj"])
-                ratio = (fc_new - fc)/(alpha*pTg)
+                ratio = (ds_subset_costs_new["fc"].data - ds_subset_costs_orig["fc"].data)/(alpha*pTg)
 
             except:
                 print("Too big step size probably crashed the simulation.")
@@ -498,11 +493,11 @@ class DataAssimilation:
             if alpha <= min_alpha_tol:
                 print(f"Minimum tolerable step size alpha reached.")
                 print(f"Step size alpha = {alpha}")
-                return alpha, fc_new, fc_data_new, fc_reg_new
+                return alpha, ds_subset_costs_new.copy()
 
             if ratio >= c1:
                 print(f"Step size alpha = {alpha}")
-                return alpha, fc_new, fc_data_new, fc_reg_new
+                return alpha, ds_subset_costs_new.copy()
     
             alpha = alpha/2.0
 
@@ -546,9 +541,9 @@ class DataAssimilation:
             ds_subset_descent_dir = self.linear_sum([ds_subset_gradient, ds_subset_gradient], 
                                                     [0.0, -1.0], ["adj", "adj"])
 
-            alpha, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient,
-                                                                         ds_subset_descent_dir,
-                                                                         init_alpha, min_alpha_tol, c1)
+            alpha, self.ds_subset_costs = self.line_search(ds_subset_gradient,
+                                                           ds_subset_descent_dir,
+                                                           init_alpha, min_alpha_tol, c1)
 
             ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_gradient], 
                                                    [1.0, -alpha], ["nodiff", "adj"])
@@ -751,80 +746,101 @@ class DataAssimilation:
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
-                delta_x = self.delta_x
-                delta_y = self.delta_y
-                IMAX = self.IMAX
-                JMAX = self.JMAX
 
-                field = ds_subset_fields_tlm[var].data.copy()
-                field_new = delta*field.copy()
+                if gamma != 0.0:
 
-                field_new[0, 0] = field_new[0, 0] - gamma*((field[0, 1]-field[0, 0])/delta_x**2 + (field[1, 0]-field[0,0])/delta_y**2)
-                field_new[JMAX, 0] = field_new[JMAX, 0] - gamma*((field[JMAX, 1]-field[JMAX, 0])/delta_x**2 + (field[JMAX-1, 0]-field[JMAX, 0])/delta_y**2)
-                field_new[0, IMAX] = field_new[0, IMAX] - gamma*((field[0, IMAX-1]-field[0, IMAX])/delta_x**2 + (field[1, IMAX]-field[0, IMAX])/delta_y**2)
-                field_new[JMAX, IMAX] = field_new[JMAX, IMAX] - gamma*((field[JMAX, IMAX-1]-field[JMAX, IMAX])/delta_x**2 + (field[JMAX-1, IMAX]-field[JMAX, IMAX])/delta_y**2)
+                    field = ds_subset_fields_tlm[var].data.copy()
+                    field_new = delta*field.copy()
 
-                field_new[1:JMAX, 0] = field_new[1:JMAX, 0] - gamma*((field[0:JMAX-1, 0] - 2*field[1:JMAX, 0] + field[2:, 0])/delta_y**2 + (field[1:JMAX, 1] - field[1:JMAX, 0])/delta_x**2)
-                field_new[1:JMAX, IMAX] = field_new[1:JMAX, IMAX] - gamma*((field[0:JMAX-1, IMAX] - 2*field[1:JMAX, IMAX] + field[2:, IMAX]) / delta_y**2 + (field[1:JMAX, IMAX-1] - field[1:JMAX, IMAX]) / delta_x**2)
+                    delta_x = self.delta_x
+                    delta_y = self.delta_y
+                    IMAX = self.IMAX
+                    JMAX = self.JMAX
 
-                field_new[0, 1:IMAX] = field_new[0, 1:IMAX] - gamma*((field[1, 1:IMAX] - field[0, 1:IMAX])/delta_y**2 + (field[0, 0:IMAX-1] - 2*field[0, 1:IMAX] + field[0, 2:])/delta_x**2)
-                field_new[JMAX, 1:IMAX] = field_new[JMAX, 1:IMAX] - gamma*((field[JMAX-1, 1:IMAX] - field[JMAX, 1:IMAX]) / delta_y**2 + (field[JMAX, 0:IMAX-1] - 2*field[JMAX, 1:IMAX] + field[JMAX, 2:]) / delta_x**2)
+                    field_new[0, 0] = field_new[0, 0] - gamma*((field[0, 1]-field[0, 0])/delta_x**2 + (field[1, 0]-field[0,0])/delta_y**2)
+                    field_new[JMAX, 0] = field_new[JMAX, 0] - gamma*((field[JMAX, 1]-field[JMAX, 0])/delta_x**2 + (field[JMAX-1, 0]-field[JMAX, 0])/delta_y**2)
+                    field_new[0, IMAX] = field_new[0, IMAX] - gamma*((field[0, IMAX-1]-field[0, IMAX])/delta_x**2 + (field[1, IMAX]-field[0, IMAX])/delta_y**2)
+                    field_new[JMAX, IMAX] = field_new[JMAX, IMAX] - gamma*((field[JMAX, IMAX-1]-field[JMAX, IMAX])/delta_x**2 + (field[JMAX-1, IMAX]-field[JMAX, IMAX])/delta_y**2)
 
-                for j in range(1, JMAX):
-                    for i in range(1, IMAX):
-                        field_new[j, i] = field_new[j, i] - gamma*(field[j, i-1] - 2*field[j, i] + field[j, i+1]) / delta_x**2
-                        field_new[j, i] = field_new[j, i] - gamma*(field[j-1, i] - 2*field[j, i] + field[j+1, i]) / delta_y**2
+                    field_new[1:JMAX, 0] = field_new[1:JMAX, 0] - gamma*((field[0:JMAX-1, 0] - 2*field[1:JMAX, 0] + field[2:, 0])/delta_y**2 + (field[1:JMAX, 1] - field[1:JMAX, 0])/delta_x**2)
+                    field_new[1:JMAX, IMAX] = field_new[1:JMAX, IMAX] - gamma*((field[0:JMAX-1, IMAX] - 2*field[1:JMAX, IMAX] + field[2:, IMAX]) / delta_y**2 + (field[1:JMAX, IMAX-1] - field[1:JMAX, IMAX]) / delta_x**2)
 
-                ds_subset_fields_tlm[var].data = field_new.copy()
+                    field_new[0, 1:IMAX] = field_new[0, 1:IMAX] - gamma*((field[1, 1:IMAX] - field[0, 1:IMAX])/delta_y**2 + (field[0, 0:IMAX-1] - 2*field[0, 1:IMAX] + field[0, 2:])/delta_x**2)
+                    field_new[JMAX, 1:IMAX] = field_new[JMAX, 1:IMAX] - gamma*((field[JMAX-1, 1:IMAX] - field[JMAX, 1:IMAX]) / delta_y**2 + (field[JMAX, 0:IMAX-1] - 2*field[JMAX, 1:IMAX] + field[JMAX, 2:]) / delta_x**2)
+
+                    for j in range(1, JMAX):
+                        for i in range(1, IMAX):
+                            field_new[j, i] = field_new[j, i] - gamma*(field[j, i-1] - 2*field[j, i] + field[j, i+1]) / delta_x**2
+                            field_new[j, i] = field_new[j, i] - gamma*(field[j-1, i] - 2*field[j, i] + field[j+1, i]) / delta_y**2
+
+                    ds_subset_fields_tlm[var].data = field_new.copy()
+
+                else:
+
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D":
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
-                delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
-                KCMAX = self.KCMAX
 
-                field = ds_subset_fields_tlm[var].data.copy()
-                field_new = delta*field.copy()
+                if gamma != 0.0:
 
-                field_new[0] = field_new[0] - gamma*(field[1]-field[0])/delta_z[0]**2
-                field_new[KCMAX] = field_new[KCMAX] - gamma*(field[KCMAX-1]-field[KCMAX])/delta_z[KCMAX-1]**2
+                    field = ds_subset_fields_tlm[var].data.copy()
+                    field_new = delta*field.copy()
 
-                for kc in range(1, KCMAX):
-                    field_new[kc] = field_new[kc] - gamma*((field[kc+1] - field[kc])/delta_z[kc] - (field[kc] - field[kc-1])/delta_z[kc-1])*(2.0/(delta_z[kc]+delta_z[kc-1]))
+                    delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
+                    KCMAX = self.KCMAX
 
-                ds_subset_fields_tlm[var].data = field_new.copy()
+                    field_new[0] = field_new[0] - gamma*(field[1]-field[0])/delta_z[0]**2
+                    field_new[KCMAX] = field_new[KCMAX] - gamma*(field[KCMAX-1]-field[KCMAX])/delta_z[KCMAX-1]**2
+
+                    for kc in range(1, KCMAX):
+                        field_new[kc] = field_new[kc] - gamma*((field[kc+1] - field[kc])/delta_z[kc] - (field[kc] - field[kc-1])/delta_z[kc-1])*(2.0/(delta_z[kc]+delta_z[kc-1]))
+
+                    ds_subset_fields_tlm[var].data = field_new.copy()
+
+                else:
+
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2DT":
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
-                delta_x = self.delta_x
-                delta_y = self.delta_y
-                IMAX = self.IMAX
-                JMAX = self.JMAX
-                NTDAMAX = self.NTDAMAX
 
-                field = ds_subset_fields_tlm[var].data.copy()
-                field_new = delta*field.copy()
+                if gamma != 0.0:
 
-                field_new[:, 0, 0] = field_new[:, 0, 0] - gamma*((field[:, 0, 1]-field[:, 0, 0])/delta_x**2 + (field[:, 1, 0]-field[:, 0, 0])/delta_y**2)
-                field_new[:, JMAX, 0] = field_new[:, JMAX, 0] - gamma*((field[:, JMAX, 1]-field[:, JMAX, 0])/delta_x**2 + (field[:, JMAX-1, 0]-field[:, JMAX, 0])/delta_y**2)
-                field_new[:, 0, IMAX] = field_new[:, 0, IMAX] - gamma*((field[:, 0, IMAX-1]-field[:, 0, IMAX])/delta_x**2 + (field[:, 1, IMAX]-field[:, 0, IMAX])/delta_y**2)
-                field_new[:, JMAX, IMAX] = field_new[:, JMAX, IMAX] - gamma*((field[:, JMAX, IMAX-1]-field[:, JMAX, IMAX])/delta_x**2 + (field[:, JMAX-1, IMAX]-field[:, JMAX, IMAX])/delta_y**2)
+                    field = ds_subset_fields_tlm[var].data.copy()
+                    field_new = delta*field.copy()
 
-                field_new[:, 1:JMAX, 0] = field_new[:, 1:JMAX, 0] - gamma*((field[:, 0:JMAX-1, 0] - 2*field[:, 1:JMAX, 0] + field[:, 2:, 0])/delta_y**2 + (field[:, 1:JMAX, 1] - field[:, 1:JMAX, 0])/delta_x**2)
-                field_new[:, 1:JMAX, IMAX] = field_new[:, 1:JMAX, IMAX] - gamma*((field[:, 0:JMAX-1, IMAX] - 2*field[:, 1:JMAX, IMAX] + field[:, 2:, IMAX]) / delta_y**2 + (field[:, 1:JMAX, IMAX-1] - field[:, 1:JMAX, IMAX]) / delta_x**2)
+                    delta_x = self.delta_x
+                    delta_y = self.delta_y
+                    IMAX = self.IMAX
+                    JMAX = self.JMAX
+                    NTDAMAX = self.NTDAMAX
 
-                field_new[:, 0, 1:IMAX] = field_new[:, 0, 1:IMAX] - gamma*((field[:, 1, 1:IMAX] - field[:, 0, 1:IMAX])/delta_y**2 + (field[:, 0, 0:IMAX-1] - 2*field[:, 0, 1:IMAX] + field[:, 0, 2:])/delta_x**2)
-                field_new[:, JMAX, 1:IMAX] = field_new[:, JMAX, 1:IMAX] - gamma*((field[:, JMAX-1, 1:IMAX] - field[:, JMAX, 1:IMAX]) / delta_y**2 + (field[:, JMAX, 0:IMAX-1] - 2*field[:, JMAX, 1:IMAX] + field[:, JMAX, 2:]) / delta_x**2)
+                    field_new[:, 0, 0] = field_new[:, 0, 0] - gamma*((field[:, 0, 1]-field[:, 0, 0])/delta_x**2 + (field[:, 1, 0]-field[:, 0, 0])/delta_y**2)
+                    field_new[:, JMAX, 0] = field_new[:, JMAX, 0] - gamma*((field[:, JMAX, 1]-field[:, JMAX, 0])/delta_x**2 + (field[:, JMAX-1, 0]-field[:, JMAX, 0])/delta_y**2)
+                    field_new[:, 0, IMAX] = field_new[:, 0, IMAX] - gamma*((field[:, 0, IMAX-1]-field[:, 0, IMAX])/delta_x**2 + (field[:, 1, IMAX]-field[:, 0, IMAX])/delta_y**2)
+                    field_new[:, JMAX, IMAX] = field_new[:, JMAX, IMAX] - gamma*((field[:, JMAX, IMAX-1]-field[:, JMAX, IMAX])/delta_x**2 + (field[:, JMAX-1, IMAX]-field[:, JMAX, IMAX])/delta_y**2)
 
-                for j in range(1, JMAX):
-                    for i in range(1, IMAX):
-                        field_new[:, j, i] = field_new[:, j, i] - gamma*(field[:, j, i-1] - 2*field[:, j, i] + field[:, j, i+1]) / delta_x**2
-                        field_new[:, j, i] = field_new[:, j, i] - gamma*(field[:, j-1, i] - 2*field[:, j, i] + field[:, j+1, i]) / delta_y**2
+                    field_new[:, 1:JMAX, 0] = field_new[:, 1:JMAX, 0] - gamma*((field[:, 0:JMAX-1, 0] - 2*field[:, 1:JMAX, 0] + field[:, 2:, 0])/delta_y**2 + (field[:, 1:JMAX, 1] - field[:, 1:JMAX, 0])/delta_x**2)
+                    field_new[:, 1:JMAX, IMAX] = field_new[:, 1:JMAX, IMAX] - gamma*((field[:, 0:JMAX-1, IMAX] - 2*field[:, 1:JMAX, IMAX] + field[:, 2:, IMAX]) / delta_y**2 + (field[:, 1:JMAX, IMAX-1] - field[:, 1:JMAX, IMAX]) / delta_x**2)
 
-                ds_subset_fields_tlm[var].data = field_new.copy()
+                    field_new[:, 0, 1:IMAX] = field_new[:, 0, 1:IMAX] - gamma*((field[:, 1, 1:IMAX] - field[:, 0, 1:IMAX])/delta_y**2 + (field[:, 0, 0:IMAX-1] - 2*field[:, 0, 1:IMAX] + field[:, 0, 2:])/delta_x**2)
+                    field_new[:, JMAX, 1:IMAX] = field_new[:, JMAX, 1:IMAX] - gamma*((field[:, JMAX-1, 1:IMAX] - field[:, JMAX, 1:IMAX]) / delta_y**2 + (field[:, JMAX, 0:IMAX-1] - 2*field[:, JMAX, 1:IMAX] + field[:, JMAX, 2:]) / delta_x**2)
+
+                    for j in range(1, JMAX):
+                        for i in range(1, IMAX):
+                            field_new[:, j, i] = field_new[:, j, i] - gamma*(field[:, j, i-1] - 2*field[:, j, i] + field[:, j, i+1]) / delta_x**2
+                            field_new[:, j, i] = field_new[:, j, i] - gamma*(field[:, j-1, i] - 2*field[:, j, i] + field[:, j+1, i]) / delta_y**2
+
+                    ds_subset_fields_tlm[var].data = field_new.copy()
+
+                else:
+
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
 
             else:
                 raise ValueError(f"eval_sqrt_prior_C_inv_action: Issue with {var}. Prior action only works for scalar or 2D or 3D or 2DT fields.")
@@ -890,140 +906,161 @@ class DataAssimilation:
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
-                delta_x = self.delta_x
-                delta_y = self.delta_y
-                IMAX = self.IMAX
-                JMAX = self.JMAX
 
-                field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+                if gamma != 0.0:
 
-                result_old = np.copy(field)
-                result = np.copy(field)
+                    delta_x = self.delta_x
+                    delta_y = self.delta_y
+                    IMAX = self.IMAX
+                    JMAX = self.JMAX
 
-                for _ in range(self.MAX_ITERS_SOR):
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
 
-                    for j in range(JMAX+1):
-                        for i in range(IMAX+1):
+                    result_old = np.copy(field)
+                    result = np.copy(field)
 
-                            if j == 0 and i == 0:
-                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[0, 0] + gamma*(result_old[0, 1] / delta_x**2 + result_old[1, 0] / delta_y**2)
-                            elif j == JMAX and i == 0:
-                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[JMAX, 0] + gamma*(result_old[JMAX, 1] / delta_x**2 + result[JMAX-1, 0] / delta_y**2)
-                            elif j == 0 and i == IMAX:
-                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[0, IMAX] + gamma*(result[0, IMAX-1] / delta_x**2 + result_old[1, IMAX] / delta_y**2)
-                            elif j == JMAX and i == IMAX:
-                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[JMAX, IMAX] + gamma*(result[JMAX, IMAX-1] / delta_x**2 + result[JMAX-1, IMAX] / delta_y**2)
-                            elif i == 0:
-                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
-                                bracket = field[j, 0] + gamma*((result[j-1, 0] + result_old[j+1, 0]) / delta_y**2 + result_old[j, 1] / delta_x**2)
-                            elif i == IMAX:
-                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
-                                bracket = field[j, IMAX] + gamma*((result[j-1, IMAX] + result_old[j+1, IMAX]) / delta_y**2 + result[j, IMAX-1] / delta_x**2)
-                            elif j == 0:
-                                diagonal = delta + gamma*(2/delta_x**2 + 1/delta_y**2)
-                                bracket = field[0, i] + gamma*(result_old[1, i] / delta_y**2 + (result[0, i-1] + result_old[0, i+1]) / delta_x**2)
-                            elif j == JMAX:
-                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
-                                bracket = field[JMAX, i] + gamma*(result[JMAX-1, i] / delta_y**2 + (result[JMAX, i-1] + result_old[JMAX, i+1]) / delta_x**2)
-                            else:
-                                diagonal = delta + 2*gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[j, i] + gamma*((result[j-1, i] + result_old[j+1, i]) / delta_y**2 + (result[j, i-1] + result_old[j, i+1]) / delta_x**2)
+                    for _ in range(self.MAX_ITERS_SOR):
 
-                            result[j, i] = (1 - self.OMEGA_SOR) * result_old[j, i] + self.OMEGA_SOR / diagonal * bracket
+                        for j in range(JMAX+1):
+                            for i in range(IMAX+1):
 
-                    result_old = result.copy()
+                                if j == 0 and i == 0:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[0, 0] + gamma*(result_old[0, 1] / delta_x**2 + result_old[1, 0] / delta_y**2)
+                                elif j == JMAX and i == 0:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[JMAX, 0] + gamma*(result_old[JMAX, 1] / delta_x**2 + result[JMAX-1, 0] / delta_y**2)
+                                elif j == 0 and i == IMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[0, IMAX] + gamma*(result[0, IMAX-1] / delta_x**2 + result_old[1, IMAX] / delta_y**2)
+                                elif j == JMAX and i == IMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[JMAX, IMAX] + gamma*(result[JMAX, IMAX-1] / delta_x**2 + result[JMAX-1, IMAX] / delta_y**2)
+                                elif i == 0:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                    bracket = field[j, 0] + gamma*((result[j-1, 0] + result_old[j+1, 0]) / delta_y**2 + result_old[j, 1] / delta_x**2)
+                                elif i == IMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                    bracket = field[j, IMAX] + gamma*((result[j-1, IMAX] + result_old[j+1, IMAX]) / delta_y**2 + result[j, IMAX-1] / delta_x**2)
+                                elif j == 0:
+                                    diagonal = delta + gamma*(2/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[0, i] + gamma*(result_old[1, i] / delta_y**2 + (result[0, i-1] + result_old[0, i+1]) / delta_x**2)
+                                elif j == JMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                    bracket = field[JMAX, i] + gamma*(result[JMAX-1, i] / delta_y**2 + (result[JMAX, i-1] + result_old[JMAX, i+1]) / delta_x**2)
+                                else:
+                                    diagonal = delta + 2*gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[j, i] + gamma*((result[j-1, i] + result_old[j+1, i]) / delta_y**2 + (result[j, i-1] + result_old[j, i+1]) / delta_x**2)
 
-                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+                                result[j, i] = (1 - self.OMEGA_SOR) * result_old[j, i] + self.OMEGA_SOR / diagonal * bracket
+
+                        result_old = result.copy()
+
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+
+                else:
+
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / delta
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
-                delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
-                KCMAX = self.KCMAX
 
-                field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+                if gamma != 0.0:
 
-                result_old = np.copy(field)
-                result = np.copy(field)
+                    delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
+                    KCMAX = self.KCMAX
 
-                for _ in range(self.MAX_ITERS_SOR):
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
 
-                    for kc in range(KCMAX+1):
+                    result_old = np.copy(field)
+                    result = np.copy(field)
 
-                        if kc == 0:
-                            diagonal = delta + gamma / delta_z[0]**2
-                            bracket = field[0] + gamma * result_old[1] / delta_z[0]**2
-                        elif kc == KCMAX:
-                            diagonal = delta + gamma / delta_z[KCMAX-1]**2
-                            bracket = field[KCMAX] + gamma * result[KCMAX-1] / delta_z[KCMAX-1]**2
-                        else:
-                            diagonal = delta + 2 * gamma / (delta_z[kc]*delta_z[kc-1])
-                            bracket = field[kc] + gamma*(result[kc-1] / delta_z[kc-1] + result_old[kc+1] / delta_z[kc])*(2.0/(delta_z[kc]+delta_z[kc-1]))
+                    for _ in range(self.MAX_ITERS_SOR):
 
-                        result[kc] = (1 - self.OMEGA_SOR) * result_old[kc] + self.OMEGA_SOR / diagonal * bracket
+                        for kc in range(KCMAX+1):
 
-                    result_old = result.copy()
+                            if kc == 0:
+                                diagonal = delta + gamma / delta_z[0]**2
+                                bracket = field[0] + gamma * result_old[1] / delta_z[0]**2
+                            elif kc == KCMAX:
+                                diagonal = delta + gamma / delta_z[KCMAX-1]**2
+                                bracket = field[KCMAX] + gamma * result[KCMAX-1] / delta_z[KCMAX-1]**2
+                            else:
+                                diagonal = delta + 2 * gamma / (delta_z[kc]*delta_z[kc-1])
+                                bracket = field[kc] + gamma*(result[kc-1] / delta_z[kc-1] + result_old[kc+1] / delta_z[kc])*(2.0/(delta_z[kc]+delta_z[kc-1]))
 
-                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+                            result[kc] = (1 - self.OMEGA_SOR) * result_old[kc] + self.OMEGA_SOR / diagonal * bracket
+
+                        result_old = result.copy()
+
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+
+                else:
+
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / delta
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2DT" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
-                delta_x = self.delta_x
-                delta_y = self.delta_y
-                IMAX = self.IMAX
-                JMAX = self.JMAX
-                NTDAMAX = self.NTDAMAX
 
-                field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+                if gamma != 0.0:
 
-                result_old = np.copy(field)
-                result = np.copy(field)
+                    delta_x = self.delta_x
+                    delta_y = self.delta_y
+                    IMAX = self.IMAX
+                    JMAX = self.JMAX
+                    NTDAMAX = self.NTDAMAX
 
-                for _ in range(self.MAX_ITERS_SOR):
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
 
-                    for j in range(JMAX+1):
-                        for i in range(IMAX+1):
+                    result_old = np.copy(field)
+                    result = np.copy(field)
 
-                            if j == 0 and i == 0:
-                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[:, 0, 0] + gamma*(result_old[:, 0, 1] / delta_x**2 + result_old[:, 1, 0] / delta_y**2)
-                            elif j == JMAX and i == 0:
-                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[:, JMAX, 0] + gamma*(result_old[:, JMAX, 1] / delta_x**2 + result[:, JMAX-1, 0] / delta_y**2)
-                            elif j == 0 and i == IMAX:
-                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[:, 0, IMAX] + gamma*(result[:, 0, IMAX-1] / delta_x**2 + result_old[:, 1, IMAX] / delta_y**2)
-                            elif j == JMAX and i == IMAX:
-                                diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[:, JMAX, IMAX] + gamma*(result[:, JMAX, IMAX-1] / delta_x**2 + result[:, JMAX-1, IMAX] / delta_y**2)
-                            elif i == 0:
-                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
-                                bracket = field[:, j, 0] + gamma*((result[:, j-1, 0] + result_old[:, j+1, 0]) / delta_y**2 + result_old[:, j, 1] / delta_x**2)
-                            elif i == IMAX:
-                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
-                                bracket = field[:, j, IMAX] + gamma*((result[:, j-1, IMAX] + result_old[:, j+1, IMAX]) / delta_y**2 + result[:, j, IMAX-1] / delta_x**2)
-                            elif j == 0:
-                                diagonal = delta + gamma*(2/delta_x**2 + 1/delta_y**2)
-                                bracket = field[:, 0, i] + gamma*(result_old[:, 1, i] / delta_y**2 + (result[:, 0, i-1] + result_old[:, 0, i+1]) / delta_x**2)
-                            elif j == JMAX:
-                                diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
-                                bracket = field[:, JMAX, i] + gamma*(result[:, JMAX-1, i] / delta_y**2 + (result[:, JMAX, i-1] + result_old[:, JMAX, i+1]) / delta_x**2)
-                            else:
-                                diagonal = delta + 2*gamma*(1/delta_x**2 + 1/delta_y**2)
-                                bracket = field[:, j, i] + gamma*((result[:, j-1, i] + result_old[:, j+1, i]) / delta_y**2 + (result[:, j, i-1] + result_old[:, j, i+1]) / delta_x**2)
+                    for _ in range(self.MAX_ITERS_SOR):
 
-                            result[:, j, i] = (1 - self.OMEGA_SOR) * result_old[:, j, i] + self.OMEGA_SOR / diagonal * bracket
+                        for j in range(JMAX+1):
+                            for i in range(IMAX+1):
 
-                    result_old = result.copy()
+                                if j == 0 and i == 0:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[:, 0, 0] + gamma*(result_old[:, 0, 1] / delta_x**2 + result_old[:, 1, 0] / delta_y**2)
+                                elif j == JMAX and i == 0:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[:, JMAX, 0] + gamma*(result_old[:, JMAX, 1] / delta_x**2 + result[:, JMAX-1, 0] / delta_y**2)
+                                elif j == 0 and i == IMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[:, 0, IMAX] + gamma*(result[:, 0, IMAX-1] / delta_x**2 + result_old[:, 1, IMAX] / delta_y**2)
+                                elif j == JMAX and i == IMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[:, JMAX, IMAX] + gamma*(result[:, JMAX, IMAX-1] / delta_x**2 + result[:, JMAX-1, IMAX] / delta_y**2)
+                                elif i == 0:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                    bracket = field[:, j, 0] + gamma*((result[:, j-1, 0] + result_old[:, j+1, 0]) / delta_y**2 + result_old[:, j, 1] / delta_x**2)
+                                elif i == IMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                    bracket = field[:, j, IMAX] + gamma*((result[:, j-1, IMAX] + result_old[:, j+1, IMAX]) / delta_y**2 + result[:, j, IMAX-1] / delta_x**2)
+                                elif j == 0:
+                                    diagonal = delta + gamma*(2/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[:, 0, i] + gamma*(result_old[:, 1, i] / delta_y**2 + (result[:, 0, i-1] + result_old[:, 0, i+1]) / delta_x**2)
+                                elif j == JMAX:
+                                    diagonal = delta + gamma*(1/delta_x**2 + 2/delta_y**2)
+                                    bracket = field[:, JMAX, i] + gamma*(result[:, JMAX-1, i] / delta_y**2 + (result[:, JMAX, i-1] + result_old[:, JMAX, i+1]) / delta_x**2)
+                                else:
+                                    diagonal = delta + 2*gamma*(1/delta_x**2 + 1/delta_y**2)
+                                    bracket = field[:, j, i] + gamma*((result[:, j-1, i] + result_old[:, j+1, i]) / delta_y**2 + (result[:, j, i-1] + result_old[:, j, i+1]) / delta_x**2)
 
-                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+                                result[:, j, i] = (1 - self.OMEGA_SOR) * result_old[:, j, i] + self.OMEGA_SOR / diagonal * bracket
+
+                        result_old = result.copy()
+
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+
+                else:
+
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / delta
 
         ds_fields = xr.merge([ds_subset_fields_params, ds_subset_fields_adj_or_adj_action_or_tlm_action])
 
@@ -1341,9 +1378,9 @@ class DataAssimilation:
 
             ds_subset_descent_dir = self.eval_sqrt_prior_cov_action("adj")
 
-            alpha, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient,
-                                                                         ds_subset_descent_dir,
-                                                                         init_alpha_cg, min_alpha_cg_tol, c1)
+            alpha, self.ds_subset_costs = self.line_search(ds_subset_gradient,
+                                                           ds_subset_descent_dir,
+                                                           init_alpha_cg, min_alpha_cg_tol, c1)
 
             if alpha <= min_alpha_cg_tol:
 
@@ -1352,9 +1389,9 @@ class DataAssimilation:
                 ds_subset_neg_gradient = self.linear_sum([ds_subset_gradient, ds_subset_gradient], 
                                                         [0.0, -1.0], ["adj", "adj"])
 
-                alpha, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient,
-                                                                             ds_subset_neg_gradient,
-                                                                             init_alpha_gd, min_alpha_gd_tol, c1)
+                alpha, self.ds_subset_costs = self.line_search(ds_subset_gradient,
+                                                               ds_subset_neg_gradient,
+                                                               init_alpha_gd, min_alpha_gd_tol, c1)
 
                 ds_subset_params_new = self.linear_sum([ds_subset_params, ds_subset_neg_gradient], 
                                                        [1.0, alpha], ["nodiff", "adj"])
@@ -1691,9 +1728,9 @@ class DataAssimilation:
                 beta = list_rhos[k-i-1] * self.l2_inner_product([list_ds_subset_y[i-idx_lower_limit], ds_subset_p], ["adj", "adj"])
                 ds_subset_p = self.linear_sum([ds_subset_p, list_ds_subset_s[i-idx_lower_limit]], [1.0, list_alphas[k-i-1] - beta], ["adj", "nodiff"])
 
-            alpha_line_search, self.fc, self.fc_data, self.fc_reg = self.line_search(ds_subset_gradient_old,
-                                                                                     ds_subset_p,
-                                                                                     init_alpha, min_alpha_tol, c1)
+            alpha_line_search, self.ds_subset_costs = self.line_search(ds_subset_gradient_old,
+                                                                       ds_subset_p,
+                                                                       init_alpha, min_alpha_tol, c1)
 
             print("---------------------------------------------------------------------------------------------------------------")
             print(f"Iter {k+1}, fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
