@@ -483,7 +483,7 @@ class DataAssimilation:
         
                 ds_subset_costs_new = self.eval_costs()
                 pTg = self.l2_inner_product([ds_subset_descent_dir, ds_subset_gradient], ["adj", "adj"])
-                ratio = (ds_subset_costs_new["fc"].data - ds_subset_costs_orig["fc"].data)/(alpha*pTg)
+                ratio = (ds_subset_costs_new["fc"].data[0] - ds_subset_costs_orig["fc"].data[0])/(alpha*pTg)
 
             except:
                 print("Too big step size probably crashed the simulation.")
@@ -520,12 +520,12 @@ class DataAssimilation:
 
             log_file = self.dirpath_store_states + "/gradient_descent/" + "gradient_descent.log"
             with open(log_file, "a") as f:
-                f.write(f"Iteration 0: Cost = {self.fc:.6f}, Misfit Cost = {self.fc_data:.6f}, Regularization Cost = {self.fc_reg:.6f}\n")
+                f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + "state_GD_iter_0.nc")
 
         print("---------------------------------------------------------------------------------------------------------------")
-        print(f"iter 0, fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+        print(f"iter 0, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
         print("---------------------------------------------------------------------------------------------------------------")
 
         for i in range(MAX_ITERS):
@@ -555,12 +555,12 @@ class DataAssimilation:
             if self.dirpath_store_states is not None:
 
                 with open(log_file, "a") as f:
-                    f.write(f"Iteration {i+1}: Cost = {self.fc:.6f}\n")
+                    f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
 
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_{i+1}.nc")
 
             print("---------------------------------------------------------------------------------------------------------------")
-            print(f"iter {i+1}, fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+            print(f"iter {i+1}, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
             print("---------------------------------------------------------------------------------------------------------------")
 
         return self.ds_subset_params
@@ -1357,12 +1357,12 @@ class DataAssimilation:
 
             log_file = self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "inexact_gn_hessian_cg.log"
             with open(log_file, "a") as f:
-                f.write(f"Iteration 0: Cost = {self.fc:.6f}\n")
+                f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
 
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "state_GNHessCG_iter_0.nc")
 
         print("---------------------------------------------------------------------------------------------------------------")
-        print(f"Initial fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+        print(f"Initial fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
         print("---------------------------------------------------------------------------------------------------------------")
 
         for i in range(MAX_ITERS):
@@ -1409,12 +1409,12 @@ class DataAssimilation:
             if self.dirpath_store_states is not None:
 
                 with open(log_file, "a") as f:
-                    f.write(f"Iteration {i+1}: Cost = {self.fc:.6f}\n")
+                    f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
 
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}.nc")
 
             print("---------------------------------------------------------------------------------------------------------------")
-            print(f"Outer iter {i+1}, fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+            print(f"Outer iter {i+1}, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
             print("---------------------------------------------------------------------------------------------------------------")
 
         return self.ds_subset_params
@@ -1675,12 +1675,12 @@ class DataAssimilation:
 
             log_file = self.dirpath_store_states + "/l_bfgs/" + "l_bfgs.log"
             with open(log_file, "a") as f:
-                f.write(f"Iteration 0: Cost = {self.fc:.6f}\n")
+                f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
 
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + "state_LBFGS_iter_0.nc")
 
         print("---------------------------------------------------------------------------------------------------------------")
-        print(f"Initial fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+        print(f"Initial fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
         print("---------------------------------------------------------------------------------------------------------------")
 
         m = num_pairs_lbfgs
@@ -1733,7 +1733,7 @@ class DataAssimilation:
                                                                        init_alpha, min_alpha_tol, c1)
 
             print("---------------------------------------------------------------------------------------------------------------")
-            print(f"Iter {k+1}, fc = {self.fc}, fc_data = {self.fc_data}, fc_reg = {self.fc_reg}")
+            print(f"Iter {k+1}, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
             print("---------------------------------------------------------------------------------------------------------------")
 
             ds_subset_params_new = self.linear_sum([ds_subset_params_old, ds_subset_p], 
@@ -1746,7 +1746,7 @@ class DataAssimilation:
             if self.dirpath_store_states is not None:
 
                 with open(log_file, "a") as f:
-                    f.write(f"Iteration {k+1}: Cost = {self.fc:.6f}\n")
+                    f.write(f"Iteration {k+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}\n")
 
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + f"state_LBFGS_iter_{k+1}.nc")
 
