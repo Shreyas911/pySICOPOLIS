@@ -1423,7 +1423,8 @@ class DataAssimilation:
     def revd(self,
              sampling_param_k_REVD: int, 
              oversampling_param_p_REVD: int = 10,
-             mode: str = "misfit_prior_precond") -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"]]:
+             mode: str = "misfit_prior_precond",
+             Q: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None) -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l dim_l"]]:
 
         if mode not in ["misfit_prior_precond", "full_prior_precond"]:
             raise ValueError("revd: Can only decompose full prior-preconditioned Hessian or misfit prior-preconditioned Hessian.")
@@ -1433,11 +1434,17 @@ class DataAssimilation:
             func_hessian_action = self.eval_prior_preconditioned_misfit_hessian_action
             
         ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
-
-        l = sampling_param_k_REVD + oversampling_param_p_REVD
         m, _ = self.flattened_vector(ds_subset_omega)
-        list_ds_subset_Q_cols = []
-        Q = np.empty((0, 0))
+
+        if Q is None:
+            list_ds_subset_Q_cols = []
+            Q = np.empty((0, 0))
+            l = sampling_param_k_REVD + oversampling_param_p_REVD
+        else:
+            if Q.shape[0] != m:
+                raise ValueError("revd: Dimensions of given Q and random vector ds_subset_omega do not match!")
+            list_ds_subset_Q_cols = [self.construct_ds(q.reshape(-1,), ds_subset_omega) for q in Q.T]
+            l = sampling_param_k_REVD + oversampling_param_p_REVD + Q.shape[1]
 
         while True:
             ds_subset_y = func_hessian_action()
@@ -1486,7 +1493,26 @@ class DataAssimilation:
         Lambda, S = np.linalg.eig(T)
         U = Q @ S
 
-        return U, Lambda
+        if self.dirpath_store_states is not None:
+
+            if not os.path.isdir(self.dirpath_store_states):
+                self.make_dir(self.dirpath_store_states)
+            if os.path.isdir(self.dirpath_store_states + "/" + "REVD"):
+                self.remove_dir(self.dirpath_store_states + "/" + "REVD")
+
+            self.make_dir(self.dirpath_store_states + "/" + "REVD")
+
+            if mode == "full_prior_precond":
+                suffix = "full"
+            if mode == "misfit_prior_precond":
+                suffix = "misfit"
+
+            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"U_{suffix}.npy", U)
+            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"Lambda_{suffix}.npy", Lambda)
+            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"Q_{suffix}.npy", Q)
+            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"S_{suffix}.npy", S)
+
+        return U, Lambda, Q, S
 
     @beartype
     def forward_uq_propagation(self,
