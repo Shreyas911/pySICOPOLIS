@@ -170,6 +170,14 @@ class DataAssimilation:
         self.remove_dir(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
         self.ds_prior_fields.to_netcdf(self.ad_io_dir + "/ad_input_nodiff_prior.nc")
 
+        if self.dirpath_store_states is not None:
+
+            if not os.path.isdir(self.dirpath_store_states):
+                self.make_dir(self.dirpath_store_states)
+
+            self.remove_dir(self.dirpath_store_states + "/prior_fields.nc")
+            self.ds_prior_fields.to_netcdf(self.dirpath_store_states + "/prior_fields.nc")
+
         if ds_prior_X is not None:
 
             self.ds_prior_X = ds_prior_X
@@ -208,6 +216,17 @@ class DataAssimilation:
                       self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
 
         self.ds_prior_X_fields = self.open_xr_ds(self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
+
+        if self.dirpath_store_states is not None:
+
+            if not os.path.isdir(self.dirpath_store_states):
+                self.make_dir(self.dirpath_store_states)
+
+            self.remove_dir(self.dirpath_store_states + "/prior_X.nc")
+            self.ds_prior_X.to_netcdf(self.dirpath_store_states + "/prior_X.nc")
+
+            self.remove_dir(self.dirpath_store_states + "/prior_X_fields.nc")
+            self.ds_prior_X_fields.to_netcdf(self.dirpath_store_states + "/prior_X_fields.nc")
 
         # Manually ensure that ignored fields don't have 0 in the X matrix, since it divides in the F90 code. Assigning a dummy value 1.0, should not matter.
         if self.list_fields_to_ignore:
@@ -522,7 +541,8 @@ class DataAssimilation:
             with open(log_file, "a") as f:
                 f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
-            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + "state_GD_iter_0.nc")
+            self.ds_subset_params.to_netcdf(self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_0.nc")
+            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + "state_GD_iter_0_fields.nc")
 
         print("---------------------------------------------------------------------------------------------------------------")
         print(f"iter 0, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
@@ -557,7 +577,8 @@ class DataAssimilation:
                 with open(log_file, "a") as f:
                     f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
-                self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_{i+1}.nc")
+                self.ds_subset_params.to_netcdf(self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_{i+1}.nc")
+                self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_{i+1}_fields.nc")
 
             print("---------------------------------------------------------------------------------------------------------------")
             print(f"iter {i+1}, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
@@ -1359,7 +1380,8 @@ class DataAssimilation:
             with open(log_file, "a") as f:
                 f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
-            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "state_GNHessCG_iter_0.nc")
+            self.ds_subset_params.to_netcdf(self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_0.nc")
+            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "state_GNHessCG_iter_0_fields.nc")
 
         print("---------------------------------------------------------------------------------------------------------------")
         print(f"Initial fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
@@ -1411,7 +1433,8 @@ class DataAssimilation:
                 with open(log_file, "a") as f:
                     f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
-                self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}.nc")
+                self.ds_subset_params.to_netcdf(self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}.nc")
+                self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}_fields.nc")
 
             print("---------------------------------------------------------------------------------------------------------------")
             print(f"Outer iter {i+1}, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
@@ -1703,7 +1726,8 @@ class DataAssimilation:
             with open(log_file, "a") as f:
                 f.write(f"Iteration 0: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
-            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + "state_LBFGS_iter_0.nc")
+            self.ds_subset_params.to_netcdf(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + "state_LBFGS_iter_0.nc")
+            self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + "state_LBFGS_iter_0_fields.nc")
 
         print("---------------------------------------------------------------------------------------------------------------")
         print(f"Initial fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
@@ -1774,7 +1798,8 @@ class DataAssimilation:
                 with open(log_file, "a") as f:
                     f.write(f"Iteration {k+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
-                self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + f"state_LBFGS_iter_{k+1}.nc")
+                self.ds_subset_params.to_netcdf(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + "state_LBFGS_iter_{k+1}.nc")
+                self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/l_bfgs/" + f"state_LBFGS_iter_{k+1}_fields.nc")
 
             ds_subset_gradient_new = self.eval_gradient()
 
