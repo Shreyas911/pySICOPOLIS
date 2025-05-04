@@ -1447,7 +1447,8 @@ class DataAssimilation:
              sampling_param_k_REVD: int, 
              oversampling_param_p_REVD: int = 10,
              mode: str = "misfit_prior_precond",
-             Q: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None) -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l dim_l"]]:
+             Q: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
+             MQ: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None) -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l dim_l"]]:
 
         if mode not in ["misfit_prior_precond", "full_prior_precond"]:
             raise ValueError("revd: Can only decompose full prior-preconditioned Hessian or misfit prior-preconditioned Hessian.")
@@ -1457,16 +1458,34 @@ class DataAssimilation:
             func_hessian_action = self.eval_prior_preconditioned_misfit_hessian_action
             
         ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
+
+        ds_subset_omega_dummy_for_MQ = ds_subset_omega.copy()
+        ds_subset_omega_dummy_for_MQ = ds_subset_omega_dummy_for_MQ.rename({var: var[:-1] + "b" for var in ds_subset_omega_dummy_for_MQ})
+        for var in ds_subset_omega_dummy_for_MQ.data_vars:
+            ds_subset_omega_dummy_for_MQ[var].attrs["type"] = "adj"
+
         m, _ = self.flattened_vector(ds_subset_omega)
 
-        if Q is None:
+        if Q is None and MQ is not None:
+            raise ValueError("revd: Q is None but MQ is not None!")
+        elif Q is not None and MQ is None:
+            raise ValueError("revd: Q is not None but MQ is None!")
+        elif Q is None and MQ is None:
             list_ds_subset_Q_cols = []
+            list_ds_subset_MQ_cols = []
             Q = np.empty((0, 0))
+            MQ = np.empty((0, 0))
             l = sampling_param_k_REVD + oversampling_param_p_REVD
         else:
-            if Q.shape[0] != m:
+            if Q.shape != MQ.shape:
+                raise ValueError("revd: Dimensions of given Q and MQ do not match!")
+            elif Q.shape[0] != m:
                 raise ValueError("revd: Dimensions of given Q and random vector ds_subset_omega do not match!")
+            elif MQ.shape[0] != m:
+                raise ValueError("revd: Dimensions of given MQ and random vector ds_subset_omega do not match!")
+
             list_ds_subset_Q_cols = [self.construct_ds(q.reshape(-1,), ds_subset_omega) for q in Q.T]
+            list_ds_subset_MQ_cols = [self.construct_ds(Mq.reshape(-1,), ds_subset_omega_dummy_for_MQ) for Mq in MQ.T]
             l = sampling_param_k_REVD + oversampling_param_p_REVD + Q.shape[1]
 
         while True:
@@ -1489,9 +1508,12 @@ class DataAssimilation:
 
             ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
 
-        list_ds_subset_MQ_cols = []
+        if list_ds_subset_MQ_cols is not None:
+            start_idx = len(list_ds_subset_MQ_cols)
+        else:
+            start_idx = 0
 
-        for ds_subset_q in list_ds_subset_Q_cols:
+        for ds_subset_q in list_ds_subset_Q_cols[start_idx:]:
 
             dict_tlm_action_only_fields_vals = {}
             for var in ds_subset_q:
@@ -1507,6 +1529,12 @@ class DataAssimilation:
             ds_subset_Mq = func_hessian_action()
 
             list_ds_subset_MQ_cols.append(ds_subset_Mq)
+
+            _, Mq = self.flattened_vector(ds_subset_Mq)
+            if MQ.size > 0:
+                MQ = np.hstack([MQ, Mq.reshape(-1, 1)])
+            else:
+                MQ = Mq.reshape(-1, 1)
 
         T = np.zeros((l, l), dtype = float)
         for i, ds_subset_qi in enumerate(list_ds_subset_Q_cols):
@@ -1533,9 +1561,10 @@ class DataAssimilation:
             np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"U_{suffix}.npy", U)
             np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"Lambda_{suffix}.npy", Lambda)
             np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"Q_{suffix}.npy", Q)
+            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"MQ_{suffix}.npy", MQ)
             np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"S_{suffix}.npy", S)
 
-        return U, Lambda, Q, S
+        return U, Lambda, Q, MQ, S
 
     @beartype
     def forward_uq_propagation(self,
