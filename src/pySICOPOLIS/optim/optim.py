@@ -1447,8 +1447,11 @@ class DataAssimilation:
              sampling_param_k_REVD: int, 
              oversampling_param_p_REVD: int = 10,
              mode: str = "misfit_prior_precond",
+             str_pass: str = "single_approx",
+             Omega: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
+             Y: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
              Q: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
-             MQ: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None) -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l dim_l"]]:
+             MQ: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None) -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"], Float[np.ndarray, "dim_l dim_l"]]:
 
         if mode not in ["misfit_prior_precond", "full_prior_precond"]:
             raise ValueError("revd: Can only decompose full prior-preconditioned Hessian or misfit prior-preconditioned Hessian.")
@@ -1456,7 +1459,13 @@ class DataAssimilation:
             func_hessian_action = self.eval_prior_preconditioned_hessian_action
         elif mode == "misfit_prior_precond":
             func_hessian_action = self.eval_prior_preconditioned_misfit_hessian_action
-            
+
+        if str_pass not in ["double_precise", "single_approx"]:
+            raise ValueError("revd: str_pass can olny be double_precise or single_approx.")
+
+        if not (Omega is None and Y is None and Q is None and MQ is None) and not (Omega is not None and Y is not None and Q is not None and MQ is not None):
+            raise ValueError("revd: Omega, Y, Q, MQ must be either None or all not None.")
+
         ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
 
         ds_subset_omega_dummy_for_MQ = ds_subset_omega.copy()
@@ -1464,33 +1473,37 @@ class DataAssimilation:
         for var in ds_subset_omega_dummy_for_MQ.data_vars:
             ds_subset_omega_dummy_for_MQ[var].attrs["type"] = "adj"
 
-        m, _ = self.flattened_vector(ds_subset_omega)
+        m, omega = self.flattened_vector(ds_subset_omega)
 
-        if Q is None and MQ is not None:
-            raise ValueError("revd: Q is None but MQ is not None!")
-        elif Q is not None and MQ is None:
-            raise ValueError("revd: Q is not None but MQ is None!")
-        elif Q is None and MQ is None:
+        if Omega is None and Y is None and Q is None and MQ is None:
             list_ds_subset_Q_cols = []
-            list_ds_subset_MQ_cols = []
+            Omega = omega.reshape(-1, 1)
+            Y = np.empty((0, 0))
             Q = np.empty((0, 0))
             MQ = np.empty((0, 0))
+
+            start_idx = 0
             l = sampling_param_k_REVD + oversampling_param_p_REVD
         else:
-            if Q.shape != MQ.shape:
-                raise ValueError("revd: Dimensions of given Q and MQ do not match!")
+            if Q.shape != MQ.shape or Omega.shape != Q.shape or Omega.shape != MQ.shape or Y.shape != Omega.shape or Y.shape != Q.shape or Y.shape != MQ.shape:
+                raise ValueError("revd: Dimensions of given Omega and Y and Q and MQ do not match!")
             elif Q.shape[0] != m:
-                raise ValueError("revd: Dimensions of given Q and random vector ds_subset_omega do not match!")
-            elif MQ.shape[0] != m:
-                raise ValueError("revd: Dimensions of given MQ and random vector ds_subset_omega do not match!")
+                raise ValueError("revd: Dimensions of given Omega, Y, Q, MQ and random vector ds_subset_omega do not match!")
 
+            Omega = np.hstack([Omega, omega.reshape(-1, 1)])
             list_ds_subset_Q_cols = [self.construct_ds(q.reshape(-1,), ds_subset_omega) for q in Q.T]
-            list_ds_subset_MQ_cols = [self.construct_ds(Mq.reshape(-1,), ds_subset_omega_dummy_for_MQ) for Mq in MQ.T]
+
+            start_idx = len(list_ds_subset_Q_cols)
             l = sampling_param_k_REVD + oversampling_param_p_REVD + Q.shape[1]
 
         while True:
             ds_subset_y = func_hessian_action()
             _, y = self.flattened_vector(ds_subset_y)
+
+            if Y.size > 0:
+                Y = np.hstack([Y, y.reshape(-1, 1)])
+            else:
+                Y = y.reshape(-1, 1)
             
             if Q.size > 0:
                 q_tilde = y - Q @ (Q.T @ y)
@@ -1507,39 +1520,41 @@ class DataAssimilation:
                 break
 
             ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
+            _, omega = self.flattened_vector(ds_subset_omega)
+            Omega = np.hstack([Omega, omega.reshape(-1, 1)])
 
-        if list_ds_subset_MQ_cols is not None:
-            start_idx = len(list_ds_subset_MQ_cols)
-        else:
-            start_idx = 0
+        if str_pass == "double_precise":
 
-        for ds_subset_q in list_ds_subset_Q_cols[start_idx:]:
+            for ds_subset_q in list_ds_subset_Q_cols[start_idx:]:
 
-            dict_tlm_action_only_fields_vals = {}
-            for var in ds_subset_q:
+                dict_tlm_action_only_fields_vals = {}
+                for var in ds_subset_q:
 
-                if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
-                    if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
-                        dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.flat[0].copy()
-                    else:
-                        dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.copy()
+                    if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+                        if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+                            dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.flat[0].copy()
+                        else:
+                            dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.copy()
 
-            _ = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
+                _ = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
 
-            ds_subset_Mq = func_hessian_action()
+                ds_subset_Mq = func_hessian_action()
 
-            list_ds_subset_MQ_cols.append(ds_subset_Mq)
+                _, Mq = self.flattened_vector(ds_subset_Mq)
+                if MQ.size > 0:
+                    MQ = np.hstack([MQ, Mq.reshape(-1, 1)])
+                else:
+                    MQ = Mq.reshape(-1, 1)
 
-            _, Mq = self.flattened_vector(ds_subset_Mq)
-            if MQ.size > 0:
-                MQ = np.hstack([MQ, Mq.reshape(-1, 1)])
-            else:
-                MQ = Mq.reshape(-1, 1)
+            T = Q.T @ MQ
 
-        T = np.zeros((l, l), dtype = float)
-        for i, ds_subset_qi in enumerate(list_ds_subset_Q_cols):
-            for j, ds_subset_qj in enumerate(list_ds_subset_MQ_cols):
-                T[i, j] = self.l2_inner_product([ds_subset_qi, ds_subset_qj], ["tlm", "adj"])
+        elif str_pass == "single_approx":
+            # MQ is not needed at all here but the function needs it to be returned and have some shape when picked up for subsequent runs.
+            MQ = Q.copy()
+            # Use pinv (pseudo-inverse) for stable inversion using SVD under the hood instead of simply inv
+            T = (Q.T @ Y) @ np.linalg.pinv(Q.T @ Omega)
+            # Make sure T is symmetric
+            T = 0.5*(T + T.T)
 
         Lambda, S = np.linalg.eig(T)
         U = Q @ S
@@ -1548,23 +1563,25 @@ class DataAssimilation:
 
             if not os.path.isdir(self.dirpath_store_states):
                 self.make_dir(self.dirpath_store_states)
-            if os.path.isdir(self.dirpath_store_states + "/" + "REVD"):
-                self.remove_dir(self.dirpath_store_states + "/" + "REVD")
+            if os.path.isdir(self.dirpath_store_states + "/" + f"REVD_{str_pass}"):
+                self.remove_dir(self.dirpath_store_states + "/" + f"REVD_{str_pass}")
 
-            self.make_dir(self.dirpath_store_states + "/" + "REVD")
+            self.make_dir(self.dirpath_store_states + "/" + f"REVD_{str_pass}")
 
             if mode == "full_prior_precond":
                 suffix = "full"
             if mode == "misfit_prior_precond":
                 suffix = "misfit"
 
-            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"U_{suffix}.npy", U)
-            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"Lambda_{suffix}.npy", Lambda)
-            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"Q_{suffix}.npy", Q)
-            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"MQ_{suffix}.npy", MQ)
-            np.save(self.dirpath_store_states + "/" + "REVD" + "/" + f"S_{suffix}.npy", S)
+            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Omega_{suffix}.npy", Omega)
+            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Y_{suffix}.npy", Y)
+            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Q_{suffix}.npy", Q)
+            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"MQ_{suffix}.npy", MQ)
+            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"U_{suffix}.npy", U)
+            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Lambda_{suffix}.npy", Lambda)
+            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"S_{suffix}.npy", S)
 
-        return U, Lambda, Q, MQ, S
+        return Omega, Y, Q, MQ, U, Lambda, S
 
     @beartype
     def forward_uq_propagation(self,
