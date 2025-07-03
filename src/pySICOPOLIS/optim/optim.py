@@ -82,6 +82,7 @@ class DataAssimilation:
 
         self.NTDAMAX = dict_params_coords["time_ad"].shape[0] - 1
         self.KCMAX   = dict_params_coords["zeta_c"].shape[0] - 1
+        self.KRMAX   = dict_params_coords["zeta_r"].shape[0] - 1
         self.JMAX    = dict_params_coords["y"].shape[0] - 1
         self.IMAX    = dict_params_coords["x"].shape[0] - 1
         self.delta_x = dict_params_coords["x"][1] - dict_params_coords["x"][0]
@@ -158,6 +159,14 @@ class DataAssimilation:
             self.dict_prior_deltas_3d = {key: self.dict_prior_deltas[key] for key in self.dict_prior_deltas if self.dict_params_fields_num_dims[key] == "3D"}
             self.ds_prior_fields["genarr3d_delta_arr"] = xr.DataArray(list(self.dict_prior_deltas_3d.values()), dims=["genarr3d"], attrs={"type": "hyperparameter_prior"})
 
+        if any(value == "3DR" for value in self.dict_params_fields_num_dims.values()):
+            self.dict_prior_sigmas_3dr = {key: self.dict_prior_sigmas[key] for key in self.dict_prior_sigmas if self.dict_params_fields_num_dims[key] == "3DR"}
+            self.ds_prior_fields["genarr3dr_sigma_arr"] = xr.DataArray(list(self.dict_prior_sigmas_3dr.values()), dims=["genarr3dr"], attrs={"type": "hyperparameter_prior"})
+            self.dict_prior_gammas_3dr = {key: self.dict_prior_gammas[key] for key in self.dict_prior_gammas if self.dict_params_fields_num_dims[key] == "3DR"}
+            self.ds_prior_fields["genarr3dr_gamma_arr"] = xr.DataArray(list(self.dict_prior_gammas_3dr.values()), dims=["genarr3dr"], attrs={"type": "hyperparameter_prior"})
+            self.dict_prior_deltas_3dr = {key: self.dict_prior_deltas[key] for key in self.dict_prior_deltas if self.dict_params_fields_num_dims[key] == "3DR"}
+            self.ds_prior_fields["genarr3dr_delta_arr"] = xr.DataArray(list(self.dict_prior_deltas_3dr.values()), dims=["genarr3dr"], attrs={"type": "hyperparameter_prior"})
+
         if any(value == "2DT" for value in self.dict_params_fields_num_dims.values()):
             self.dict_prior_sigmas_2dt = {key: self.dict_prior_sigmas[key] for key in self.dict_prior_sigmas if self.dict_params_fields_num_dims[key] == "2DT"}
             self.ds_prior_fields["gentim2d_sigma_arr"] = xr.DataArray(list(self.dict_prior_sigmas_2dt.values()), dims=["gentim2d"], attrs={"type": "hyperparameter_prior"})
@@ -204,6 +213,8 @@ class DataAssimilation:
                     dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1))**0.5
                 elif self.dict_tlm_action_fields_or_scalars[var] == "scalar" and self.dict_tlm_action_fields_num_dims[var] == "3D":
                     dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1)*(self.KCMAX+1))**0.5
+                elif self.dict_tlm_action_fields_or_scalars[var] == "scalar" and self.dict_tlm_action_fields_num_dims[var] == "3DR":
+                    dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1)*(self.KRMAX+1))**0.5
                 elif self.dict_tlm_action_fields_or_scalars[var] == "scalar" and self.dict_tlm_action_fields_num_dims[var] == "2DT":
                     dict_tlm_action_only_fields_vals[var] = self.ds_prior_X[var].data.flat[0].copy() * ((self.IMAX+1)*(self.JMAX+1)*(self.NTDAMAX+1))**0.5
                 else:
@@ -292,6 +303,18 @@ class DataAssimilation:
                         name=field
                     )
 
+                elif dict_fields_num_dims[field] == "3DR":
+
+                    da_field = xr.DataArray(
+                        data=field_val*np.ones((self.KRMAX+1, self.JMAX+1, self.IMAX+1), dtype=np.float64),
+                        dims=["zeta_r", "y", "x"],
+                        coords={"zeta_r": dict_coords["zeta_r"].copy(),
+                                "y": dict_coords["y"].copy(),
+                                "x": dict_coords["x"].copy()
+                                },
+                        name=field
+                    )
+
                 elif dict_fields_num_dims[field] == "2DT":
                     
                     da_field = xr.DataArray(
@@ -305,7 +328,7 @@ class DataAssimilation:
                     )
 
                 else:
-                    raise ValueError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; Only 2D or 3D or 2DT fields accepted.")
+                    raise ValueError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; Only 2D or 3D or 3DR or 2DT fields accepted.")
                 
             elif isinstance(field_val, np.ndarray) and not isinstance(field_val, (str, bytes)) and dict_fields_or_scalars[field] == "field":
                 
@@ -338,6 +361,21 @@ class DataAssimilation:
                         name=field
                     )
 
+                elif dict_fields_num_dims[field] == "3DR":
+
+                    if len(field_val.shape) != 3:
+                        raise ValueError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; field_val.shape != num_dims it is supposed to have.")
+
+                    da_field = xr.DataArray(
+                        data=field_val.copy(),
+                        dims=["zeta_r", "y", "x"],
+                        coords={"zeta_r": dict_coords["zeta_r"].copy(),
+                                "y": dict_coords["y"].copy(),
+                                "x": dict_coords["x"].copy()
+                                },
+                        name=field
+                    )
+
                 elif dict_fields_num_dims[field] == "2DT":
                     
                     if len(field_val.shape) != 3:
@@ -354,7 +392,7 @@ class DataAssimilation:
                     )
 
                 else:
-                    raise ValueError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; Only 2D or 3D or 2DT fields accepted.")
+                    raise ValueError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; Only 2D or 3D or 3DR or 2DT fields accepted.")
                 
             else:
                 raise TypeError(f"create_ad_nodiff_or_adj_input_nc: Issue with {field}; The type doesn't seem to be either a scalar or a numpy array.")
@@ -825,6 +863,31 @@ class DataAssimilation:
 
                     ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
 
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3DR":
+
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
+
+                if gamma != 0.0:
+
+                    field = ds_subset_fields_tlm[var].data.copy()
+                    field_new = delta*field.copy()
+
+                    delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
+                    KRMAX = self.KRMAX
+
+                    field_new[0] = field_new[0] - gamma*(field[1]-field[0])/delta_z[0]**2
+                    field_new[KRMAX] = field_new[KRMAX] - gamma*(field[KRMAX-1]-field[KRMAX])/delta_z[KRMAX-1]**2
+
+                    for kr in range(1, KRMAX):
+                        field_new[kr] = field_new[kr] - gamma*((field[kr+1] - field[kr])/delta_z[kr] - (field[kr] - field[kr-1])/delta_z[kr-1])*(2.0/(delta_z[kr]+delta_z[kr-1]))
+
+                    ds_subset_fields_tlm[var].data = field_new.copy()
+
+                else:
+
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
+
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2DT":
 
                 gamma = self.dict_prior_gammas[basic_str]
@@ -864,7 +927,7 @@ class DataAssimilation:
                     ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
 
             else:
-                raise ValueError(f"eval_sqrt_prior_C_inv_action: Issue with {var}. Prior action only works for scalar or 2D or 3D or 2DT fields.")
+                raise ValueError(f"eval_sqrt_prior_C_inv_action: Issue with {var}. Prior action only works for scalar or 2D or 3D or 3DR or 2DT fields.")
 
         dict_tlm_action_only_fields_vals = {}
         for var in ds_subset_fields_tlm:
@@ -1013,6 +1076,45 @@ class DataAssimilation:
                                 bracket = field[kc] + gamma*(result[kc-1] / delta_z[kc-1] + result_old[kc+1] / delta_z[kc])*(2.0/(delta_z[kc]+delta_z[kc-1]))
 
                             result[kc] = (1 - self.OMEGA_SOR) * result_old[kc] + self.OMEGA_SOR / diagonal * bracket
+
+                        result_old = result.copy()
+
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = result.copy()
+
+                else:
+
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / delta
+
+            elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3DR" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
+
+                gamma = self.dict_prior_gammas[basic_str]
+                delta = self.dict_prior_deltas[basic_str]
+
+                if gamma != 0.0:
+
+                    delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
+                    KRMAX = self.KRMAX
+
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+
+                    result_old = np.copy(field)
+                    result = np.copy(field)
+
+                    for _ in range(self.MAX_ITERS_SOR):
+
+                        for kr in range(KRMAX+1):
+
+                            if kr == 0:
+                                diagonal = delta + gamma / delta_z[0]**2
+                                bracket = field[0] + gamma * result_old[1] / delta_z[0]**2
+                            elif kr == KRMAX:
+                                diagonal = delta + gamma / delta_z[KRMAX-1]**2
+                                bracket = field[KRMAX] + gamma * result[KRMAX-1] / delta_z[KRMAX-1]**2
+                            else:
+                                diagonal = delta + 2 * gamma / (delta_z[kr]*delta_z[kr-1])
+                                bracket = field[kr] + gamma*(result[kr-1] / delta_z[kr-1] + result_old[kr+1] / delta_z[kr])*(2.0/(delta_z[kr]+delta_z[kr-1]))
+
+                            result[kr] = (1 - self.OMEGA_SOR) * result_old[kr] + self.OMEGA_SOR / diagonal * bracket
 
                         result_old = result.copy()
 
