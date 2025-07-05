@@ -23,6 +23,9 @@ class DataAssimilation:
                  dict_og_params_fields_vals: Dict[str, Union[Float[np.ndarray, "dimz dimy dimx"],
                                                              Float[np.ndarray, "dimy dimx"],
                                                              float]],
+                 dict_prior_params_fields_vals: Dict[str, Union[Float[np.ndarray, "dimz dimy dimx"],
+                                                                Float[np.ndarray, "dimy dimx"],
+                                                                float]],
                  dict_params_fields_num_dims: Dict[str, str],
                  dict_params_coords: Dict[str, Float[np.ndarray, "dim"]],
                  dict_params_attrs_type: Dict[str, str],
@@ -66,10 +69,11 @@ class DataAssimilation:
         self.dict_ad_inp_nc_files = {key: self.ad_io_dir + "/ad_input_" + suffix + ".nc" for key, suffix in dict_ad_nc_suffixes.items()}
         self.dict_ad_out_nc_files = {key: self.ad_io_dir + "/ad_output_" + suffix + ".nc" for key, suffix in dict_ad_nc_suffixes.items()}
 
-        if dict_og_params_fields_vals.keys() != dict_params_fields_num_dims.keys() != dict_params_coords.keys() != dict_params_attrs_type.keys() != dict_params_fields_or_scalars.keys():
+        if dict_og_params_fields_vals.keys() != dict_prior_params_fields_vals.keys() != dict_params_fields_num_dims.keys() != dict_params_coords.keys() != dict_params_attrs_type.keys() != dict_params_fields_or_scalars.keys():
             raise ValueError("DataAssimilation: Inconsistent keys for OG state.")
  
         self.dict_og_params_fields_vals = dict_og_params_fields_vals
+        self.dict_prior_params_fields_vals = dict_prior_params_fields_vals
         self.dict_params_fields_num_dims = dict_params_fields_num_dims
         self.dict_params_coords = dict_params_coords
         self.dict_params_attrs_type = dict_params_attrs_type
@@ -90,7 +94,7 @@ class DataAssimilation:
 
         self.dict_masks_observables = dict_masks_observables
 
-        if dict_og_params_fields_vals.keys() != dict_prior_sigmas.keys() != dict_prior_gammas.keys() != dict_prior_deltas.keys():
+        if dict_prior_params_fields_vals.keys() != dict_prior_sigmas.keys() != dict_prior_gammas.keys() != dict_prior_deltas.keys():
             raise ValueError("DataAssimilation: Inconsistent keys for prior dicts.")
 
         if not all(isinstance(value, float) for value in dict_prior_sigmas.values()):
@@ -135,7 +139,7 @@ class DataAssimilation:
                 else:
                     raise ValueError(f"DataAssimilation: {var} not present in self.ds_subset_params.")
 
-        _ = self.create_ad_nodiff_or_adj_input_nc(dict_og_params_fields_vals, dict_params_fields_num_dims,
+        _ = self.create_ad_nodiff_or_adj_input_nc(dict_prior_params_fields_vals, dict_params_fields_num_dims,
                                                   dict_params_coords, dict_params_attrs_type, dict_params_fields_or_scalars,
                                                   None, "ad_input_nodiff_prior.nc")
 
