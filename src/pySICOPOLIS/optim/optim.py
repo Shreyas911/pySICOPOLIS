@@ -7,6 +7,7 @@ from beartype.typing import Any, Dict, List, Optional, Tuple, Union
 from jaxtyping import Float
 
 import os
+import warnings
 
 __all__ = ["DataAssimilation"]
 
@@ -1557,7 +1558,14 @@ class DataAssimilation:
              Omega: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
              Y: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
              Q: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
-             MQ: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None) -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_l"], Float[np.ndarray, "dim_l dim_l"]]:
+             MQ: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None) -> Tuple[Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_l"], Float[np.ndarray, "dim_m dim_k"], Float[np.ndarray, "dim_k"], Float[np.ndarray, "dim_l dim_k"]]:
+
+        # See remark 5.4 of Halko, Martinsson, and Tropp's paper to understand what might be missing from single pass
+        # Basic idea for single pass was to truncate Q to get an overdetermined system to invert which will be more stable, but the Q in remark 5.4 is made from k leading singular vectors, and I don't have them
+        # This is because the first k columns of Q are not necessarily the k leading singular vectors
+
+        # Single pass or double pass, returned matrices will have Q.shape[1] + sampling_param_k_REVD columns
+        # For now, since incremental REVD setuo is deactivated due to questionable rigor of truncating Q, Y, Omega, etc., returned matrices will always have sampling_param_k_REVD columns
 
         if mode not in ["misfit_prior_precond", "full_prior_precond"]:
             raise ValueError("revd: Can only decompose full prior-preconditioned Hessian or misfit prior-preconditioned Hessian.")
@@ -1591,6 +1599,9 @@ class DataAssimilation:
             start_idx = 0
             l = sampling_param_k_REVD + oversampling_param_p_REVD
         else:
+            raise ValueError("revd: The incremental setup no longer works since it's unclear how to correctly truncate Omega, Y, etc. to shape k in the first pass.")
+            # warnings.warn("revd: The incremental setup of picking up from older values might be unreliable, it is only allowed to be used with single pass. Not sure of the rigor, it does work well for the mini notebooks.", RuntimeWarning)
+
             if Q.shape != MQ.shape or Omega.shape != Q.shape or Omega.shape != MQ.shape or Y.shape != Omega.shape or Y.shape != Q.shape or Y.shape != MQ.shape:
                 raise ValueError("revd: Dimensions of given Omega and Y and Q and MQ do not match!")
             elif Q.shape[0] != m:
@@ -1655,14 +1666,55 @@ class DataAssimilation:
             T = Q.T @ MQ
 
         elif str_pass == "single_approx":
-            # MQ is not needed at all here but the function needs it to be returned and have some shape when picked up for subsequent runs.
+
+            warnings.warn("revd: Check the comments at the start of this function to see what might be missing from the single pass, it's essentially remark 5.4 of Halko, Martinsson, Tropp's paper.", RuntimeWarning)
+
+            # MQ is not needed at all here but the function needs it to be returned and have some shape when picked up for subsequent runs (this functionality is turned off for now but still keeping this code here).
             MQ = Q.copy()
+
             # Use pinv (pseudo-inverse) for stable inversion using SVD under the hood instead of simply inv
             T = (Q.T @ Y) @ np.linalg.pinv(Q.T @ Omega)
-            # Make sure T is symmetric
-            T = 0.5*(T + T.T)
+            cond_number = np.linalg.cond(Q.T @ Omega)
+            print("Condition number of Q.T @ Omega:", cond_number)
 
-        Lambda, S = np.linalg.eig(T)
+        sym_err = np.linalg.norm(T - T.T) / np.linalg.norm(T)
+        print("Relative symmetry error of T:", sym_err)
+
+        # This is more theoretically correct, but then symmetry of T is not guaranteed.
+        # eig in the name indicates use of np.linalg.eig
+        Lambda_eig_unsymm, S_eig_unsymm = np.linalg.eig(T)
+
+        # Make sure T is symmetric
+        T = 0.5*(T + T.T)
+        # eig in the name indicates use of np.linalg.eig
+        Lambda_eig_symm, S_eig_symm = np.linalg.eig(T)
+        Lambda, S = np.linalg.eigh(T)
+
+        # Some diagnostics
+        def has_complex_parts(arr, tol=np.finfo(float).eps):
+            return np.any(np.abs(np.imag(arr)) > tol)
+
+        print(f"Complex parts check (imag > {np.finfo(float).eps:.1e}):")
+        print("eig (unsymm):", has_complex_parts(Lambda_eig_unsymm))
+        print("eig (symm):  ", has_complex_parts(Lambda_eig_symm))
+        print("eigh:        ", has_complex_parts(Lambda))
+
+        Lambda_sorted = np.sort(np.real(Lambda))
+        Lambda_eig_unsymm_sorted = np.sort(np.real(Lambda_eig_unsymm))
+        Lambda_eig_symm_sorted = np.sort(np.real(Lambda_eig_symm))
+        eig_diff_unsymm = np.linalg.norm(Lambda_eig_unsymm_sorted - Lambda_sorted) / np.linalg.norm(Lambda_sorted)
+        eig_diff_symm   = np.linalg.norm(Lambda_eig_symm_sorted - Lambda_sorted) / np.linalg.norm(Lambda_sorted)
+
+        print("Relative error:")
+        print("eig (unsymm) vs eigh:", eig_diff_unsymm)
+        print("eig (symmetrized) vs eigh:", eig_diff_symm)
+
+        Lambda_idx = np.argsort(Lambda)[::-1]
+        # Get k largest values, k here is not sampling_param_k_REVD always, for example when you read Q from an old file, k = sampling_param_k_REVD + Q.shape[1]
+        # Just in case we reactivate the reading from old file and incrementing setup again for REVD in the future, keeping k = l - oversampling_param_p_REVD is better.
+        Lambda = Lambda[Lambda_idx[:(l - oversampling_param_p_REVD)]]
+        S = S[:, Lambda_idx[:(l - oversampling_param_p_REVD)]]
+
         U = Q @ S
 
         if self.dirpath_store_states is not None:
