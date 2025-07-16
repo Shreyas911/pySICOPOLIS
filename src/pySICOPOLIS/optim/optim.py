@@ -1675,10 +1675,17 @@ class DataAssimilation:
             # Use pinv (pseudo-inverse) for stable inversion using SVD under the hood instead of simply inv
             T = (Q.T @ Y) @ np.linalg.pinv(Q.T @ Omega)
             cond_number = np.linalg.cond(Q.T @ Omega)
-            print("Condition number of Q.T @ Omega:", cond_number)
+            print("Condition number of Q.T @ Omega: ", cond_number)
+            _, S_Tsvd, _ = np.linalg.svd(Q.T @ Omega, full_matrices = False)
+            sigma_min = np.min(S_Tsvd)
+            print("Minimum singular value of Q.T @ Omega: ", sigma_min)
+            print("Condition number of Q.T @ Omega explicitly computed: ", np.max(S_Tsvd) / sigma_min)
+
+            if cond_number > 1e5 or sigma_min < 1e-10:
+                print("Warning: Q.T @ Omega is poorly conditioned. Consider switching to two-pass REVD!")
 
         sym_err = np.linalg.norm(T - T.T) / np.linalg.norm(T)
-        print("Relative symmetry error of T:", sym_err)
+        print("Relative symmetry error of T: ", sym_err)
 
         # This is more theoretically correct, but then symmetry of T is not guaranteed.
         # eig in the name indicates use of np.linalg.eig
@@ -1694,10 +1701,10 @@ class DataAssimilation:
         def has_complex_parts(arr, tol=np.finfo(float).eps):
             return np.any(np.abs(np.imag(arr)) > tol)
 
-        print(f"Complex parts check (imag > {np.finfo(float).eps:.1e}):")
-        print("eig (unsymm):", has_complex_parts(Lambda_eig_unsymm))
-        print("eig (symm):  ", has_complex_parts(Lambda_eig_symm))
-        print("eigh:        ", has_complex_parts(Lambda))
+        print(f"Complex parts check (imag > {np.finfo(float).eps:.1e}): ")
+        print("eig (unsymm): ", has_complex_parts(Lambda_eig_unsymm))
+        print("eig (symm):   ", has_complex_parts(Lambda_eig_symm))
+        print("eigh:         ", has_complex_parts(Lambda))
 
         Lambda_sorted = np.sort(np.real(Lambda))
         Lambda_eig_unsymm_sorted = np.sort(np.real(Lambda_eig_unsymm))
@@ -1705,9 +1712,9 @@ class DataAssimilation:
         eig_diff_unsymm = np.linalg.norm(Lambda_eig_unsymm_sorted - Lambda_sorted) / np.linalg.norm(Lambda_sorted)
         eig_diff_symm   = np.linalg.norm(Lambda_eig_symm_sorted - Lambda_sorted) / np.linalg.norm(Lambda_sorted)
 
-        print("Relative error:")
-        print("eig (unsymm) vs eigh:", eig_diff_unsymm)
-        print("eig (symmetrized) vs eigh:", eig_diff_symm)
+        print("Relative error: ")
+        print("eig (unsymm) vs eigh: ", eig_diff_unsymm)
+        print("eig (symmetrized) vs eigh: ", eig_diff_symm)
 
         Lambda_idx = np.argsort(Lambda)[::-1]
         # Get k largest values, k here is not sampling_param_k_REVD always, for example when you read Q from an old file, k = sampling_param_k_REVD + Q.shape[1]
