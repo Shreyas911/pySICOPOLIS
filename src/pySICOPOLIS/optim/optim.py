@@ -1485,8 +1485,8 @@ class DataAssimilation:
                 # Now append current directions to the end to serve as the most recent v_hat_prev, H_hat_v_hat_prev
                 list_subset_v_hat_prev.append((ds_subset_v_hat.copy(), ds_subset_H_hat_v_hat.copy()))
 
-            ds_subset_v_hat = self.linear_sum([ds_subset_r_hat, ds_subset_v_hat],
-                                              [1.0, beta_hat], ["adj", "tlm"])
+            ds_subset_v_hat = self.linear_sum([ds_subset_v_hat, ds_subset_r_hat],
+                                              [beta_hat, 1.0], ["tlm", "adj"])
 
             dict_tlm_action_only_fields_vals = {}
             for var in ds_subset_v_hat:
