@@ -1362,7 +1362,13 @@ class DataAssimilation:
     def conjugate_gradient(self,
                            ds_subset_gradient: Any,
                            tolerance_type: str = "superlinear",
-                           MAX_ITERS_CG: Optional[int] = None) -> Any:
+                           MAX_ITERS_CG: Optional[int] = None,
+                           max_prev_v_hat_diagnostics: Optional[int] = 5) -> Any:
+
+        if max_prev_v_hat_diagnostics is not None and max_prev_v_hat_diagnostics < 1:
+            raise ValueError("conjugate_gradient: max_prev_v_hat_diagnostics should be at least 1 if it is defined.")
+        list_subset_v_hat_prev = [] # Won't be used if max_prev_v_hat_diagnostics is not defined
+        list_str_angles_H_orthogonal_check = [] # Won't be used if max_prev_v_hat_diagnostics is not defined
 
         ds_subset_gradient_hat = self.eval_sqrt_prior_covT_action(ad_key_adj_or_adj_action = "adj")
         norm_gradient_hat = self.l2_inner_product([ds_subset_gradient_hat, ds_subset_gradient_hat], ["adj", "adj"])**0.5
@@ -1385,17 +1391,29 @@ class DataAssimilation:
 
             ds_subset_H_hat_v_hat = self.eval_prior_preconditioned_hessian_action()
 
-            if iters > 1:
-                norm_H_hat_v_hat_old = self.l2_inner_product([ds_subset_v_hat_old, ds_subset_H_hat_v_hat_old], ["tlm", "adj"])**0.5
-                norm_H_hat_v_hat = self.l2_inner_product([ds_subset_v_hat, ds_subset_H_hat_v_hat], ["tlm", "adj"])**0.5
-                inner_prod_check_H_orthogonality_1 = self.l2_inner_product([ds_subset_v_hat_old, ds_subset_H_hat_v_hat], ["tlm", "adj"])
-                inner_prod_check_H_orthogonality_2 = self.l2_inner_product([ds_subset_v_hat, ds_subset_H_hat_v_hat_old], ["tlm", "adj"])
-                cos_1 = inner_prod_check_H_orthogonality_1 / (norm_H_hat_v_hat_old * norm_H_hat_v_hat)
-                cos_2 = inner_prod_check_H_orthogonality_2 / (norm_H_hat_v_hat_old * norm_H_hat_v_hat)
-                angle_1 = np.degrees(np.arccos(np.clip(cos_1, -1, 1)))
-                angle_2 = np.degrees(np.arccos(np.clip(cos_2, -1, 1)))
-                print(f"H-orthoganality check: {cos_1}, {cos_2}")
-                print(f"Angle between v and v_old in H-norm: {angle_1}, {angle_2}")
+            if max_prev_v_hat_diagnostics is not None and len(list_subset_v_hat_prev) > 0:
+                v_curr = ds_subset_v_hat.copy()
+                H_v_curr = ds_subset_H_hat_v_hat.copy()
+                norm_H_v_curr = self.l2_inner_product([v_curr, H_v_curr], ["tlm", "adj"])**0.5
+
+                for i in range(len(list_subset_v_hat_prev)):
+                    v_prev, H_v_prev = list_subset_v_hat_prev[i]
+                    norm_H_v_prev = self.l2_inner_product([v_prev, H_v_prev], ["tlm", "adj"])**0.5
+
+                    inner_prod_1 = self.l2_inner_product([v_prev, H_v_curr], ["tlm", "adj"])
+                    inner_prod_2 = self.l2_inner_product([v_curr, H_v_prev], ["tlm", "adj"])
+
+                    cos_1 = inner_prod_1 / (norm_H_v_prev * norm_H_v_curr)
+                    cos_2 = inner_prod_2 / (norm_H_v_prev * norm_H_v_curr)
+
+                    angle_1 = np.degrees(np.arccos(np.clip(cos_1, -1.0, 1.0)))
+                    angle_2 = np.degrees(np.arccos(np.clip(cos_2, -1.0, 1.0)))
+
+                    label = f"v_old_{len(list_subset_v_hat_prev) - i}"
+                    list_str_angles_H_orthogonal_check.append(f"{label}: {angle_1:.2f}/{angle_2:.2f}")
+
+                print("H-orthogonality angles (deg):", " | ".join(list_str_angles_H_orthogonal_check))
+                list_str_angles_H_orthogonal_check.clear()
 
             v_hatT_H_hat_v_hat = self.l2_inner_product([ds_subset_v_hat, ds_subset_H_hat_v_hat], ["tlm", "adj"])
             norm_r_hat_old = self.l2_inner_product([ds_subset_r_hat, ds_subset_r_hat], ["adj", "adj"])**0.5
@@ -1459,11 +1477,16 @@ class DataAssimilation:
 
             beta_hat = norm_r_hat**2 / norm_r_hat_old**2
 
-            ds_subset_v_hat_old = ds_subset_v_hat.copy()
-            ds_subset_H_hat_v_hat_old = ds_subset_H_hat_v_hat.copy()
+            if max_prev_v_hat_diagnostics is not None:
 
-            ds_subset_v_hat = self.linear_sum([ds_subset_v_hat, ds_subset_r_hat],
-                                              [beta_hat, 1.0], ["tlm", "adj"])
+                if len(list_subset_v_hat_prev) >= max_prev_v_hat_diagnostics:
+                    list_subset_v_hat_prev.pop(0)
+
+                # Now append current directions to the end to serve as the most recent v_hat_prev, H_hat_v_hat_prev
+                list_subset_v_hat_prev.append((ds_subset_v_hat.copy(), ds_subset_H_hat_v_hat.copy()))
+
+            ds_subset_v_hat = self.linear_sum([ds_subset_r_hat, ds_subset_v_hat],
+                                              [1.0, beta_hat], ["adj", "tlm"])
 
             dict_tlm_action_only_fields_vals = {}
             for var in ds_subset_v_hat:
@@ -1485,7 +1508,8 @@ class DataAssimilation:
                               min_alpha_gd_tol: float = 1.e-10,
                               cg_tolerance_type: str = "superlinear",
                               c1: float = 1.e-4,
-                              MAX_ITERS_CG: Optional[int] = None) -> Any:
+                              MAX_ITERS_CG: Optional[int] = None,
+                              max_prev_v_hat_diagnostics: Optional[int] = 5) -> Any:
 
         if self.dirpath_store_states is not None:
 
@@ -1511,7 +1535,7 @@ class DataAssimilation:
 
             ds_subset_params = self.ds_subset_params.copy()
             ds_subset_gradient = self.eval_gradient()
-            ds_subset_descent_dir_hat = self.conjugate_gradient(ds_subset_gradient, cg_tolerance_type, MAX_ITERS_CG)
+            ds_subset_descent_dir_hat = self.conjugate_gradient(ds_subset_gradient, cg_tolerance_type, MAX_ITERS_CG, max_prev_v_hat_diagnostics)
 
             ds_out = xr.merge([ds_subset_params, ds_subset_descent_dir_hat])
             # Some weird permission denied error if this file is not removed first.
