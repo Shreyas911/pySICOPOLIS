@@ -1385,6 +1385,18 @@ class DataAssimilation:
 
             ds_subset_H_hat_v_hat = self.eval_prior_preconditioned_hessian_action()
 
+            if iters > 1:
+                norm_H_hat_v_hat_old = self.l2_inner_product([ds_subset_v_hat_old, ds_subset_H_hat_v_hat_old], ["tlm", "adj"])**0.5
+                norm_H_hat_v_hat = self.l2_inner_product([ds_subset_v_hat, ds_subset_H_hat_v_hat], ["tlm", "adj"])**0.5
+                inner_prod_check_H_orthogonality_1 = self.l2_inner_product([ds_subset_v_hat_old, ds_subset_H_hat_v_hat], ["tlm", "adj"])
+                inner_prod_check_H_orthogonality_2 = self.l2_inner_product([ds_subset_v_hat, ds_subset_H_hat_v_hat_old], ["tlm", "adj"])
+                cos_1 = inner_prod_check_H_orthogonality_1 / (norm_H_hat_v_hat_old * norm_H_hat_v_hat)
+                cos_2 = inner_prod_check_H_orthogonality_2 / (norm_H_hat_v_hat_old * norm_H_hat_v_hat)
+                angle_1 = np.degrees(np.arccos(np.clip(cos_1, -1, 1)))
+                angle_2 = np.degrees(np.arccos(np.clip(cos_2, -1, 1)))
+                print(f"H-orthoganality check: {cos_1}, {cos_2}")
+                print(f"Angle between v and v_old in H-norm: {angle_1}, {angle_2}")
+
             v_hatT_H_hat_v_hat = self.l2_inner_product([ds_subset_v_hat, ds_subset_H_hat_v_hat], ["tlm", "adj"])
             norm_r_hat_old = self.l2_inner_product([ds_subset_r_hat, ds_subset_r_hat], ["adj", "adj"])**0.5
 
@@ -1447,15 +1459,11 @@ class DataAssimilation:
 
             beta_hat = norm_r_hat**2 / norm_r_hat_old**2
 
-            ds_subset_v_hat = self.linear_sum([ds_subset_v_hat, ds_subset_r_hat],
-                                              [1.0, beta_hat], ["tlm", "adj"])
-
-            if iters > 1:
-                norm_v_hat_old = self.l2_inner_product([ds_subset_v_hat_old, ds_subset_v_hat_old], ["tlm", "tlm"])**0.5
-                norm_H_hat_v_hat = self.l2_inner_product([ds_subset_H_hat_v_hat, ds_subset_H_hat_v_hat], ["adj", "adj"])**0.5
-                inner_prod_check_H_orthogonality = self.l2_inner_product([ds_subset_v_hat_old, ds_subset_H_hat_v_hat], ["tlm", "adj"])**0.5
-                print(f"H-orthoganality check = {inner_prod_check_H_orthogonality/(norm_v_hat_old * norm_H_hat_v_hat)}")
             ds_subset_v_hat_old = ds_subset_v_hat.copy()
+            ds_subset_H_hat_v_hat_old = ds_subset_H_hat_v_hat.copy()
+
+            ds_subset_v_hat = self.linear_sum([ds_subset_v_hat, ds_subset_r_hat],
+                                              [beta_hat, 1.0], ["tlm", "adj"])
 
             dict_tlm_action_only_fields_vals = {}
             for var in ds_subset_v_hat:
