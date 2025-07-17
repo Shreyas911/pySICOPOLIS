@@ -549,6 +549,11 @@ class DataAssimilation:
 
             except:
                 print("Too big step size probably crashed the simulation.")
+
+                ## Can be used for diagnosing issues
+                # self.write_params(ds_subset_params_new)
+                # break
+
                 self.write_params(ds_subset_params_orig)
                 ratio = 0.0
 
