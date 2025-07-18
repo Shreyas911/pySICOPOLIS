@@ -1410,7 +1410,7 @@ class DataAssimilation:
                     angle_2 = np.degrees(np.arccos(np.clip(cos_2, -1.0, 1.0)))
 
                     label = f"v_old_{len(list_subset_v_hat_prev) - i}"
-                    list_str_angles_H_orthogonal_check.append(f"{label}: {angle_1:.2f}/{angle_2:.2f}")
+                    list_str_angles_H_orthogonal_check.append(f"{label}: {angle_1:.1f}/{angle_2:.1f}")
 
                 print("H-orthogonality angles (deg):", " | ".join(list_str_angles_H_orthogonal_check))
                 list_str_angles_H_orthogonal_check.clear()
