@@ -1541,6 +1541,7 @@ class DataAssimilation:
             # Some weird permission denied error if this file is not removed first.
             self.remove_dir(self.dict_ad_out_nc_files["adj"])
             ds_out.to_netcdf(self.dict_ad_out_nc_files["adj"])
+            # FUTURE TODO: ds_out has scalars as scalars but it's better to output them as fields for consistency. Doesn't seem to affect results luckily.
 
             ds_subset_descent_dir = self.eval_sqrt_prior_cov_action("adj")
 
@@ -1592,6 +1593,7 @@ class DataAssimilation:
              oversampling_param_p_REVD: int = 10,
              mode: str = "misfit_prior_precond",
              str_pass: str = "single_approx",
+             output_freq: Optional[int] = 10,
              Omega: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
              Y: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
              Q: Optional[Float[np.ndarray, "dim_m dim_l0"]] = None,
@@ -1613,9 +1615,14 @@ class DataAssimilation:
 
         if str_pass not in ["double_precise", "single_approx"]:
             raise ValueError("revd: str_pass can olny be double_precise or single_approx.")
+        elif str_pass == "single_approx":
+            warnings.warn("revd: Check the comments at the start of this function to see what might be missing from the single pass, it's essentially remark 5.4 of Halko, Martinsson, Tropp's paper.", RuntimeWarning)
 
         if not (Omega is None and Y is None and Q is None and MQ is None) and not (Omega is not None and Y is not None and Q is not None and MQ is not None):
             raise ValueError("revd: Omega, Y, Q, MQ must be either None or all not None.")
+
+        if output_freq is not None and output_freq <= 0:
+            raise ValueError("revd: output_freq should be greater than 0 when it is defined.")
 
         ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
 
@@ -1637,7 +1644,6 @@ class DataAssimilation:
             l = sampling_param_k_REVD + oversampling_param_p_REVD
         else:
             raise ValueError("revd: The incremental setup no longer works since it's unclear how to correctly truncate Omega, Y, etc. to shape k in the first pass.")
-            # warnings.warn("revd: The incremental setup of picking up from older values might be unreliable, it is only allowed to be used with single pass. Not sure of the rigor, it does work well for the mini notebooks.", RuntimeWarning)
 
             if Q.shape != MQ.shape or Omega.shape != Q.shape or Omega.shape != MQ.shape or Y.shape != Omega.shape or Y.shape != Q.shape or Y.shape != MQ.shape:
                 raise ValueError("revd: Dimensions of given Omega and Y and Q and MQ do not match!")
@@ -1670,96 +1676,96 @@ class DataAssimilation:
             ds_subset_q = self.construct_ds(q.reshape(-1,), ds_subset_omega)
             list_ds_subset_Q_cols.append(ds_subset_q)
 
+            if output_freq is not None and Q.shape[1] > oversampling_param_p_REVD and ((Q.shape[1] - oversampling_param_p_REVD) % output_freq == 0 or Q.shape[1] == l):
+
+                if str_pass == "double_precise":
+
+                    for ds_subset_q in list_ds_subset_Q_cols[start_idx:]:
+
+                        dict_tlm_action_only_fields_vals = {}
+                        for var in ds_subset_q:
+
+                            if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
+                                if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
+                                    dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.flat[0].copy()
+                                else:
+                                    dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.copy()
+
+                        _ = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
+
+                        ds_subset_Mq = func_hessian_action()
+
+                        _, Mq = self.flattened_vector(ds_subset_Mq)
+                        if MQ.size > 0:
+                            MQ = np.hstack([MQ, Mq.reshape(-1, 1)])
+                        else:
+                            MQ = Mq.reshape(-1, 1)
+
+                    T = Q.T @ MQ
+
+                    start_idx = len(list_ds_subset_Q_cols)
+
+                elif str_pass == "single_approx":
+
+                    # MQ is not needed at all here but the function needs it to be returned and have some shape when picked up for subsequent runs (this functionality is turned off for now but still keeping this code here).
+                    MQ = Q.copy()
+
+                    # Use pinv (pseudo-inverse) for stable inversion using SVD under the hood instead of simply inv
+                    T = (Q.T @ Y) @ np.linalg.pinv(Q.T @ Omega)
+                    cond_number = np.linalg.cond(Q.T @ Omega)
+                    print("Condition number of Q.T @ Omega: ", cond_number)
+                    _, S_Tsvd, _ = np.linalg.svd(Q.T @ Omega, full_matrices = False)
+                    sigma_min = np.min(S_Tsvd)
+                    print("Minimum singular value of Q.T @ Omega: ", sigma_min)
+                    print("Condition number of Q.T @ Omega explicitly computed: ", np.max(S_Tsvd) / sigma_min)
+
+                    if cond_number > 1e5 or sigma_min < 1e-10:
+                        print("Warning: Q.T @ Omega is poorly conditioned. Consider switching to two-pass REVD!")
+
+                sym_err = np.linalg.norm(T - T.T) / np.linalg.norm(T)
+                print("Relative symmetry error of T: ", sym_err)
+
+                # This is more theoretically correct, but then symmetry of T is not guaranteed.
+                # eig in the name indicates use of np.linalg.eig
+                Lambda_eig_unsymm, _ = np.linalg.eig(T)
+
+                # Make sure T is symmetric
+                T = 0.5*(T + T.T)
+                # eig in the name indicates use of np.linalg.eig
+                Lambda_eig_symm, _ = np.linalg.eig(T)
+                Lambda, S = np.linalg.eigh(T)
+
+                print(f"Complex parts check (imag > {np.finfo(float).eps:.1e}): ")
+                print("eig (unsymm): ", self.has_complex_parts(Lambda_eig_unsymm))
+                print("eig (symm):   ", self.has_complex_parts(Lambda_eig_symm))
+                print("eigh:         ", self.has_complex_parts(Lambda))
+
+                Lambda_sorted = np.sort(np.real(Lambda))
+                Lambda_eig_unsymm_sorted = np.sort(np.real(Lambda_eig_unsymm))
+                Lambda_eig_symm_sorted = np.sort(np.real(Lambda_eig_symm))
+                eig_diff_unsymm = np.linalg.norm(Lambda_eig_unsymm_sorted - Lambda_sorted) / np.linalg.norm(Lambda_sorted)
+                eig_diff_symm   = np.linalg.norm(Lambda_eig_symm_sorted - Lambda_sorted) / np.linalg.norm(Lambda_sorted)
+
+                print("Relative error: ")
+                print("eig (unsymm) vs eigh: ", eig_diff_unsymm)
+                print("eig (symmetrized) vs eigh: ", eig_diff_symm)
+
+                Lambda_idx = np.argsort(Lambda)[::-1]
+                # Get k largest values, k here is not sampling_param_k_REVD always, for example when you read Q from an old file, k = sampling_param_k_REVD + Q.shape[1]
+                # Just in case we reactivate the reading from old file and incrementing setup again for REVD in the future, keeping k = l - oversampling_param_p_REVD is better.
+                Lambda = Lambda[Lambda_idx[:(l - oversampling_param_p_REVD)]]
+                S = S[:, Lambda_idx[:(l - oversampling_param_p_REVD)]]
+
+                U = Q @ S
+
+                print(f"First {Q.shape[1] - oversampling_param_p_REVD} eigenvalues: {Lambda}")
+
             if Q.shape[1] == l:
                 break
 
             ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
             _, omega = self.flattened_vector(ds_subset_omega)
             Omega = np.hstack([Omega, omega.reshape(-1, 1)])
-
-        if str_pass == "double_precise":
-
-            for ds_subset_q in list_ds_subset_Q_cols[start_idx:]:
-
-                dict_tlm_action_only_fields_vals = {}
-                for var in ds_subset_q:
-
-                    if not self.list_fields_to_ignore or (self.list_fields_to_ignore and var[:-1] not in self.list_fields_to_ignore):
-                        if self.dict_tlm_action_fields_or_scalars[var] == "scalar":
-                            dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.flat[0].copy()
-                        else:
-                            dict_tlm_action_only_fields_vals[var] = ds_subset_q[var].data.copy()
-
-                _ = self.create_ad_tlm_action_input_nc(dict_tlm_action_only_fields_vals)
-
-                ds_subset_Mq = func_hessian_action()
-
-                _, Mq = self.flattened_vector(ds_subset_Mq)
-                if MQ.size > 0:
-                    MQ = np.hstack([MQ, Mq.reshape(-1, 1)])
-                else:
-                    MQ = Mq.reshape(-1, 1)
-
-            T = Q.T @ MQ
-
-        elif str_pass == "single_approx":
-
-            warnings.warn("revd: Check the comments at the start of this function to see what might be missing from the single pass, it's essentially remark 5.4 of Halko, Martinsson, Tropp's paper.", RuntimeWarning)
-
-            # MQ is not needed at all here but the function needs it to be returned and have some shape when picked up for subsequent runs (this functionality is turned off for now but still keeping this code here).
-            MQ = Q.copy()
-
-            # Use pinv (pseudo-inverse) for stable inversion using SVD under the hood instead of simply inv
-            T = (Q.T @ Y) @ np.linalg.pinv(Q.T @ Omega)
-            cond_number = np.linalg.cond(Q.T @ Omega)
-            print("Condition number of Q.T @ Omega: ", cond_number)
-            _, S_Tsvd, _ = np.linalg.svd(Q.T @ Omega, full_matrices = False)
-            sigma_min = np.min(S_Tsvd)
-            print("Minimum singular value of Q.T @ Omega: ", sigma_min)
-            print("Condition number of Q.T @ Omega explicitly computed: ", np.max(S_Tsvd) / sigma_min)
-
-            if cond_number > 1e5 or sigma_min < 1e-10:
-                print("Warning: Q.T @ Omega is poorly conditioned. Consider switching to two-pass REVD!")
-
-        sym_err = np.linalg.norm(T - T.T) / np.linalg.norm(T)
-        print("Relative symmetry error of T: ", sym_err)
-
-        # This is more theoretically correct, but then symmetry of T is not guaranteed.
-        # eig in the name indicates use of np.linalg.eig
-        Lambda_eig_unsymm, S_eig_unsymm = np.linalg.eig(T)
-
-        # Make sure T is symmetric
-        T = 0.5*(T + T.T)
-        # eig in the name indicates use of np.linalg.eig
-        Lambda_eig_symm, S_eig_symm = np.linalg.eig(T)
-        Lambda, S = np.linalg.eigh(T)
-
-        # Some diagnostics
-        def has_complex_parts(arr, tol=np.finfo(float).eps):
-            return np.any(np.abs(np.imag(arr)) > tol)
-
-        print(f"Complex parts check (imag > {np.finfo(float).eps:.1e}): ")
-        print("eig (unsymm): ", has_complex_parts(Lambda_eig_unsymm))
-        print("eig (symm):   ", has_complex_parts(Lambda_eig_symm))
-        print("eigh:         ", has_complex_parts(Lambda))
-
-        Lambda_sorted = np.sort(np.real(Lambda))
-        Lambda_eig_unsymm_sorted = np.sort(np.real(Lambda_eig_unsymm))
-        Lambda_eig_symm_sorted = np.sort(np.real(Lambda_eig_symm))
-        eig_diff_unsymm = np.linalg.norm(Lambda_eig_unsymm_sorted - Lambda_sorted) / np.linalg.norm(Lambda_sorted)
-        eig_diff_symm   = np.linalg.norm(Lambda_eig_symm_sorted - Lambda_sorted) / np.linalg.norm(Lambda_sorted)
-
-        print("Relative error: ")
-        print("eig (unsymm) vs eigh: ", eig_diff_unsymm)
-        print("eig (symmetrized) vs eigh: ", eig_diff_symm)
-
-        Lambda_idx = np.argsort(Lambda)[::-1]
-        # Get k largest values, k here is not sampling_param_k_REVD always, for example when you read Q from an old file, k = sampling_param_k_REVD + Q.shape[1]
-        # Just in case we reactivate the reading from old file and incrementing setup again for REVD in the future, keeping k = l - oversampling_param_p_REVD is better.
-        Lambda = Lambda[Lambda_idx[:(l - oversampling_param_p_REVD)]]
-        S = S[:, Lambda_idx[:(l - oversampling_param_p_REVD)]]
-
-        U = Q @ S
 
         if self.dirpath_store_states is not None:
 
@@ -2398,4 +2404,10 @@ class DataAssimilation:
             shell=True)
     
         return None
+
+    @staticmethod
+    @beartype
+    def has_complex_parts(arr: Union[np.ndarray, float, complex],
+                          tol: float = np.finfo(float).eps) -> bool:
+        return np.any(np.abs(np.imag(arr)) > tol)
 
