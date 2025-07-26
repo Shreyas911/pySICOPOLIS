@@ -1359,7 +1359,7 @@ class DataAssimilation:
             else:
                 ds_subset_prior_precond_misfit_hess_action[var].data = ds_subset_prior_precond_misfit_hess_action[var].data + ds_subset_tlm[basic_str + "d"].data
 
-        # Note that the final result is not written to any nc file
+        # NOTE: The final result is not written to any nc file
         return ds_subset_prior_precond_misfit_hess_action
 
     @beartype
