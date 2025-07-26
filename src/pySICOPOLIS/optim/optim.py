@@ -983,9 +983,12 @@ class DataAssimilation:
             ad_subset_key = "tlm"
         else:
             # NOTE: eval_sqrt_prior_C_action called within eval_sqrt_prior_cov_action("adj") called in inexact_gn_hessian_cg is called on ds_out written to self.dict_ad_out_nc_files["adj"] and it has scalars as scalars and not fields.
-            #       ds_fields_adj_or_adj_action_or_tlm_action as a name implies fields but that is not true for this call of eval_sqrt_prior_C_action. It seems to be working fine.
+            #       ds_fields_adj_or_adj_action_or_tlm_action as a name implies fields but that is not true for this call of eval_sqrt_prior_C_action. It seems to be working fine. See comments in inexact_gn_hessian_cg to understand more.
             ds_fields_adj_or_adj_action_or_tlm_action = self.open_xr_ds(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
             ad_subset_key = "adj"
+
+            ## Keeping this print statement here which can help you see what many (not all) of the comments starting with NOTE: are trying to explain. Print any scalar variable's shape here if xx_n_glen_da_dummy2d_scalar is not in use.
+            # print(ds_fields_adj_or_adj_action_or_tlm_action["xx_n_glen_da_dummy2d_scalar"].shape)
 
         ds_subset_fields_params = self.subset_of_ds(ds_fields_adj_or_adj_action_or_tlm_action, "type", "nodiff")
         ds_subset_fields_adj_or_adj_action_or_tlm_action = self.subset_of_ds(ds_fields_adj_or_adj_action_or_tlm_action, "type", ad_subset_key)
@@ -1251,7 +1254,7 @@ class DataAssimilation:
             ad_subset_key = "tlm"
         else:
             # NOTE: eval_sqrt_prior_cov_action("adj") called in inexact_gn_hessian_cg is called on ds_out written to self.dict_ad_out_nc_files["adj"] and it has scalars as scalars and not fields.
-            #       ds_fields_adj_or_tlm_action as a name implies fields but that is not true for this call of eval_sqrt_prior_cov_action. It seems to be working fine.
+            #       ds_fields_adj_or_tlm_action as a name implies fields but that is not true for this call of eval_sqrt_prior_cov_action. It seems to be working fine. See comments in inexact_gn_hessian_cg to understand more.
             ds_fields_adj_or_tlm_action = self.open_xr_ds(self.dict_ad_out_nc_files[ad_key_adj_or_tlm_action])
             ad_subset_key = "adj"
 
