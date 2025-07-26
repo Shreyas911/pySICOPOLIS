@@ -1546,6 +1546,13 @@ class DataAssimilation:
             self.remove_dir(self.dict_ad_out_nc_files["adj"])
             ds_out.to_netcdf(self.dict_ad_out_nc_files["adj"])
             # NOTE: ds_out has scalars as scalars and not fields and it still seems to be working fine.
+            # NOTE: On further thought, this is the only way to do it right. There is no other way.
+            #       This is because ds_subset_descent_dir_hat was computed using CG, which necessarily needs us to represent a scalar parameter and its gradient as only one
+            #       dimension in the control space. Once you solve for the ds_subset_descent_dir_hat, you cannot convert a scalar direction back into the field.
+            #       To see why, understand that for scalars, you accumulate the adjoint from the vector field i.e. varb = SUM(varb), but you cannot go in the reverse direction since
+            #       the vector varb field is not going to be uniform.
+            # NOTE: It is working right because all we do here is convert ds_subset_descent_dir_hat to ds_subset_descent_dir which doesn't need to go through any SICOPOLIS operations to trigger errors.
+            #       We just get ds_subset_descent_dir and then find the new parameters ds_subset_params_new and write them to file and move on. So this minor issue or "bug" doesn't cause any problems.
 
             ds_subset_descent_dir = self.eval_sqrt_prior_cov_action("adj")
 
