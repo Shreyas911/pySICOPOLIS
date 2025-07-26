@@ -982,6 +982,8 @@ class DataAssimilation:
             ds_fields_adj_or_adj_action_or_tlm_action = self.open_xr_ds(self.dict_ad_inp_nc_files[ad_key_adj_or_adj_action_or_tlm_action], False)
             ad_subset_key = "tlm"
         else:
+            # NOTE: eval_sqrt_prior_C_action called within eval_sqrt_prior_cov_action("adj") called in inexact_gn_hessian_cg is called on ds_out written to self.dict_ad_out_nc_files["adj"] and it has scalars as scalars and not fields.
+            #       ds_fields_adj_or_adj_action_or_tlm_action as a name implies fields but that is not true for this call of eval_sqrt_prior_C_action. It seems to be working fine.
             ds_fields_adj_or_adj_action_or_tlm_action = self.open_xr_ds(self.dict_ad_out_nc_files[ad_key_adj_or_adj_action_or_tlm_action])
             ad_subset_key = "adj"
 
@@ -1248,6 +1250,8 @@ class DataAssimilation:
             ds_fields_adj_or_tlm_action = self.open_xr_ds(self.dict_ad_inp_nc_files[ad_key_adj_or_tlm_action], False)
             ad_subset_key = "tlm"
         else:
+            # NOTE: eval_sqrt_prior_cov_action("adj") called in inexact_gn_hessian_cg is called on ds_out written to self.dict_ad_out_nc_files["adj"] and it has scalars as scalars and not fields.
+            #       ds_fields_adj_or_tlm_action as a name implies fields but that is not true for this call of eval_sqrt_prior_cov_action. It seems to be working fine.
             ds_fields_adj_or_tlm_action = self.open_xr_ds(self.dict_ad_out_nc_files[ad_key_adj_or_tlm_action])
             ad_subset_key = "adj"
 
@@ -1541,7 +1545,7 @@ class DataAssimilation:
             # Some weird permission denied error if this file is not removed first.
             self.remove_dir(self.dict_ad_out_nc_files["adj"])
             ds_out.to_netcdf(self.dict_ad_out_nc_files["adj"])
-            # FUTURE TODO: ds_out has scalars as scalars but it's better to output them as fields for consistency. Doesn't seem to affect results luckily.
+            # NOTE: ds_out has scalars as scalars and not fields and it still seems to be working fine.
 
             ds_subset_descent_dir = self.eval_sqrt_prior_cov_action("adj")
 
@@ -2409,5 +2413,5 @@ class DataAssimilation:
     @beartype
     def has_complex_parts(arr: Union[np.ndarray, float, complex],
                           tol: float = np.finfo(float).eps) -> bool:
-        return np.any(np.abs(np.imag(arr)) > tol)
+        return bool(np.any(np.abs(np.imag(arr)) > tol))
 
