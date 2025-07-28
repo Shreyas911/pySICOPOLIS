@@ -1670,6 +1670,20 @@ class DataAssimilation:
             start_idx = len(list_ds_subset_Q_cols)
             l = sampling_param_k_REVD + oversampling_param_p_REVD + Q.shape[1]
 
+        if self.dirpath_store_states is not None:
+
+            if not os.path.isdir(self.dirpath_store_states):
+                self.make_dir(self.dirpath_store_states)
+            if os.path.isdir(self.dirpath_store_states + "/" + f"REVD_{str_pass}"):
+                self.remove_dir(self.dirpath_store_states + "/" + f"REVD_{str_pass}")
+
+            self.make_dir(self.dirpath_store_states + "/" + f"REVD_{str_pass}")
+
+            if mode == "full_prior_precond":
+                suffix = "full"
+            if mode == "misfit_prior_precond":
+                suffix = "misfit"
+
         while True:
             ds_subset_y = func_hessian_action()
             _, y = self.flattened_vector(ds_subset_y)
@@ -1765,14 +1779,24 @@ class DataAssimilation:
                 print("eig (symmetrized) vs eigh: ", eig_diff_symm)
 
                 Lambda_idx = np.argsort(Lambda)[::-1]
-                # Get k largest values, k here is not sampling_param_k_REVD always, for example when you read Q from an old file, k = sampling_param_k_REVD + Q.shape[1]
-                # Just in case we reactivate the reading from old file and incrementing setup again for REVD in the future, keeping k = l - oversampling_param_p_REVD is better.
-                Lambda = Lambda[Lambda_idx[:(l - oversampling_param_p_REVD)]]
-                S = S[:, Lambda_idx[:(l - oversampling_param_p_REVD)]]
+                # Get all eigenmodes except the last oversampling_param_p_REVD
+                Lambda = Lambda[Lambda_idx[:(-oversampling_param_p_REVD)]]
+                S = S[:, Lambda_idx[:(-oversampling_param_p_REVD)]]
 
                 U = Q @ S
 
-                print(f"First {Q.shape[1] - oversampling_param_p_REVD} eigenvalues: {Lambda}")
+                num_eigenmodes = Q.shape[1] - oversampling_param_p_REVD
+                print(f"First {num_eigenmodes} eigenvalues: {Lambda}")
+
+                if self.dirpath_store_states is not None:
+
+                    np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Omega_{suffix}_{num_eigenmodes}.npy", Omega)
+                    np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Y_{suffix}_{num_eigenmodes}.npy", Y)
+                    np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Q_{suffix}_{num_eigenmodes}.npy", Q)
+                    np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"MQ_{suffix}_{num_eigenmodes}.npy", MQ)
+                    np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"U_{suffix}_{num_eigenmodes}.npy", U)
+                    np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Lambda_{suffix}_{num_eigenmodes}.npy", Lambda)
+                    np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"S_{suffix}_{num_eigenmodes}.npy", S)
 
             if Q.shape[1] == l:
                 break
@@ -1780,28 +1804,6 @@ class DataAssimilation:
             ds_subset_omega = self.create_ad_tlm_action_input_nc(bool_randomize = True)
             _, omega = self.flattened_vector(ds_subset_omega)
             Omega = np.hstack([Omega, omega.reshape(-1, 1)])
-
-        if self.dirpath_store_states is not None:
-
-            if not os.path.isdir(self.dirpath_store_states):
-                self.make_dir(self.dirpath_store_states)
-            if os.path.isdir(self.dirpath_store_states + "/" + f"REVD_{str_pass}"):
-                self.remove_dir(self.dirpath_store_states + "/" + f"REVD_{str_pass}")
-
-            self.make_dir(self.dirpath_store_states + "/" + f"REVD_{str_pass}")
-
-            if mode == "full_prior_precond":
-                suffix = "full"
-            if mode == "misfit_prior_precond":
-                suffix = "misfit"
-
-            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Omega_{suffix}.npy", Omega)
-            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Y_{suffix}.npy", Y)
-            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Q_{suffix}.npy", Q)
-            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"MQ_{suffix}.npy", MQ)
-            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"U_{suffix}.npy", U)
-            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"Lambda_{suffix}.npy", Lambda)
-            np.save(self.dirpath_store_states + "/" + f"REVD_{str_pass}" + "/" + f"S_{suffix}.npy", S)
 
         return Omega, Y, Q, MQ, U, Lambda, S
 
