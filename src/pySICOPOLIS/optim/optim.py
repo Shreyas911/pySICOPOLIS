@@ -264,6 +264,8 @@ class DataAssimilation:
             self.filename_final_sim_output = filename_vx_vy_s_g
         elif filename_final_sim_output is not None:
             self.filename_final_sim_output = filename_final_sim_output
+        elif filename_final_sim_output is None:
+            raise ValueError("DataAssimilation: filename_final_sim_output should be defined when filename_vx_vy_s_g is None.")
 
     @beartype
     def create_ad_nodiff_or_adj_input_nc(self,
@@ -1619,7 +1621,7 @@ class DataAssimilation:
                     f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
                 self.ds_subset_params.to_netcdf(self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}.nc")
-                ds_subset_gradient.to_netcdf(self.dirpath_store_states + "/gradient_descent/" + f"gradient_GNHessCG_iter_{i}.nc")
+                ds_subset_gradient.to_netcdf(self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"gradient_GNHessCG_iter_{i}.nc")
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}_fields.nc")
 
                 path_sico_out_nc = self.dict_sico_out_folders["nodiff"] + "/" + self.filename_final_sim_output
