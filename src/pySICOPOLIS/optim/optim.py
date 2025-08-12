@@ -43,7 +43,8 @@ class DataAssimilation:
                  filename_vx_vy_s_g: Optional[str] = None,
                  dirpath_store_states: Optional[str] = None,
                  num_prior_samples: Optional[int] = 1000,
-                 ds_prior_X: Optional[Any] = None) -> None:
+                 ds_prior_X: Optional[Any] = None,
+                 filename_final_sim_output: Optional[str] = None) -> None:
 
         super().__init__()
 
@@ -256,6 +257,13 @@ class DataAssimilation:
         self.ds_prior_X_fields.to_netcdf(self.ad_io_dir + "/ad_input_nodiff_prior_X.nc")
 
         self.ds_subset_costs = self.eval_costs()
+
+        if filename_vx_vy_s_g is not None and filename_final_sim_output is not None:
+            raise ValueError("DataAssimilation: filename_final_sim_output should not be defined when filename_vx_vy_s_g is not None.")
+        elif filename_vx_vy_s_g is not None:
+            self.filename_final_sim_output = filename_vx_vy_s_g
+        elif filename_final_sim_output is not None:
+            self.filename_final_sim_output = filename_final_sim_output
 
     @beartype
     def create_ad_nodiff_or_adj_input_nc(self,
@@ -592,6 +600,11 @@ class DataAssimilation:
             self.ds_subset_params.to_netcdf(self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_0.nc")
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + "state_GD_iter_0_fields.nc")
 
+            path_sico_out_nc = self.dict_sico_out_folders["nodiff"] + "/" + self.filename_final_sim_output
+            if not os.path.isfile(path_sico_out_nc):
+                raise ValueError(f"gradient_descent: Final simulation output file {path_sico_out_nc} is missing.")
+            self.copy_dir(path_sico_out_nc, self.dirpath_store_states + "/gradient_descent/" + f"final_sim_output_GD_iter_0_fields.nc")
+
         print("---------------------------------------------------------------------------------------------------------------")
         print(f"iter 0, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
         print("---------------------------------------------------------------------------------------------------------------")
@@ -626,7 +639,13 @@ class DataAssimilation:
                     f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
                 self.ds_subset_params.to_netcdf(self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_{i+1}.nc")
+                ds_subset_gradient.to_netcdf(self.dirpath_store_states + "/gradient_descent/" + f"gradient_GD_iter_{i}.nc")
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/gradient_descent/" + f"state_GD_iter_{i+1}_fields.nc")
+
+                path_sico_out_nc = self.dict_sico_out_folders["nodiff"] + "/" + self.filename_final_sim_output
+                if not os.path.isfile(path_sico_out_nc):
+                    raise ValueError(f"gradient_descent: Final simulation output file {path_sico_out_nc} is missing.")
+                self.copy_dir(path_sico_out_nc, self.dirpath_store_states + "/gradient_descent/" + f"final_sim_output_GD_iter_{i+1}_fields.nc")
 
             print("---------------------------------------------------------------------------------------------------------------")
             print(f"iter {i+1}, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
@@ -809,20 +828,21 @@ class DataAssimilation:
 
             if self.dict_params_fields_or_scalars[basic_str] == "scalar":
 
-                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data * self.dict_prior_deltas[basic_str]
+                # NOTE: np.sqrt(delta_x * delta_y) should be changed to np.sqrt(delta_z) for 3D scalars, this is future work since this is good enough for now.
+                ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data * self.dict_prior_deltas[basic_str] * np.sqrt(delta_x * delta_y)
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D":
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
+                delta_x = self.delta_x
+                delta_y = self.delta_y
 
                 if gamma != 0.0:
 
                     field = ds_subset_fields_tlm[var].data.copy()
                     field_new = delta*field.copy()
 
-                    delta_x = self.delta_x
-                    delta_y = self.delta_y
                     IMAX = self.IMAX
                     JMAX = self.JMAX
 
@@ -842,23 +862,23 @@ class DataAssimilation:
                             field_new[j, i] = field_new[j, i] - gamma*(field[j, i-1] - 2*field[j, i] + field[j, i+1]) / delta_x**2
                             field_new[j, i] = field_new[j, i] - gamma*(field[j-1, i] - 2*field[j, i] + field[j+1, i]) / delta_y**2
 
-                    ds_subset_fields_tlm[var].data = field_new.copy()
+                    ds_subset_fields_tlm[var].data = field_new.copy() * np.sqrt(delta_x * delta_y)
 
                 else:
 
-                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy() * np.sqrt(delta_x * delta_y)
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D":
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
+                delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
 
                 if gamma != 0.0:
 
                     field = ds_subset_fields_tlm[var].data.copy()
                     field_new = delta*field.copy()
 
-                    delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
                     KCMAX = self.KCMAX
 
                     field_new[0] = field_new[0] - gamma*(field[1]-field[0])/delta_z[0]**2
@@ -867,23 +887,23 @@ class DataAssimilation:
                     for kc in range(1, KCMAX):
                         field_new[kc] = field_new[kc] - gamma*((field[kc+1] - field[kc])/delta_z[kc] - (field[kc] - field[kc-1])/delta_z[kc-1])*(2.0/(delta_z[kc]+delta_z[kc-1]))
 
-                    ds_subset_fields_tlm[var].data = field_new.copy()
+                    ds_subset_fields_tlm[var].data = field_new.copy() * np.sqrt(delta_z)
 
                 else:
 
-                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy() * np.sqrt(delta_z)
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3DR":
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
+                delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
 
                 if gamma != 0.0:
 
                     field = ds_subset_fields_tlm[var].data.copy()
                     field_new = delta*field.copy()
 
-                    delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
                     KRMAX = self.KRMAX
 
                     field_new[0] = field_new[0] - gamma*(field[1]-field[0])/delta_z[0]**2
@@ -892,24 +912,24 @@ class DataAssimilation:
                     for kr in range(1, KRMAX):
                         field_new[kr] = field_new[kr] - gamma*((field[kr+1] - field[kr])/delta_z[kr] - (field[kr] - field[kr-1])/delta_z[kr-1])*(2.0/(delta_z[kr]+delta_z[kr-1]))
 
-                    ds_subset_fields_tlm[var].data = field_new.copy()
+                    ds_subset_fields_tlm[var].data = field_new.copy() * np.sqrt(delta_z)
 
                 else:
 
-                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy() * np.sqrt(delta_z)
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2DT":
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
+                delta_x = self.delta_x
+                delta_y = self.delta_y
 
                 if gamma != 0.0:
 
                     field = ds_subset_fields_tlm[var].data.copy()
                     field_new = delta*field.copy()
 
-                    delta_x = self.delta_x
-                    delta_y = self.delta_y
                     IMAX = self.IMAX
                     JMAX = self.JMAX
                     NTDAMAX = self.NTDAMAX
@@ -930,11 +950,11 @@ class DataAssimilation:
                             field_new[:, j, i] = field_new[:, j, i] - gamma*(field[:, j, i-1] - 2*field[:, j, i] + field[:, j, i+1]) / delta_x**2
                             field_new[:, j, i] = field_new[:, j, i] - gamma*(field[:, j-1, i] - 2*field[:, j, i] + field[:, j+1, i]) / delta_y**2
 
-                    ds_subset_fields_tlm[var].data = field_new.copy()
+                    ds_subset_fields_tlm[var].data = field_new.copy() * np.sqrt(delta_x * delta_y)
 
                 else:
 
-                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy()
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy() * np.sqrt(delta_x * delta_y)
 
             else:
                 raise ValueError(f"eval_sqrt_prior_C_inv_action: Issue with {var}. Prior action only works for scalar or 2D or 3D or 3DR or 2DT fields.")
@@ -999,21 +1019,22 @@ class DataAssimilation:
 
             if self.dict_params_fields_or_scalars[basic_str] == "scalar" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
-                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data / self.dict_prior_deltas[basic_str]
+                # NOTE: np.sqrt(delta_x * delta_y) should be changed to np.sqrt(delta_z) for 3D scalars, this is future work since this is good enough for now.
+                ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data / (self.dict_prior_deltas[basic_str] * np.sqrt(delta_x * delta_y))
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
+                delta_x = self.delta_x
+                delta_y = self.delta_y
 
                 if gamma != 0.0:
 
-                    delta_x = self.delta_x
-                    delta_y = self.delta_y
                     IMAX = self.IMAX
                     JMAX = self.JMAX
 
-                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / np.sqrt(delta_x * delta_y)
 
                     result_old = np.copy(field)
                     result = np.copy(field)
@@ -1059,19 +1080,19 @@ class DataAssimilation:
 
                 else:
 
-                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / delta
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / (delta * np.sqrt(delta_x * delta_y))
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3D" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
+                delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
 
                 if gamma != 0.0:
 
-                    delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
                     KCMAX = self.KCMAX
 
-                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / np.sqrt(delta_z)
 
                     result_old = np.copy(field)
                     result = np.copy(field)
@@ -1098,19 +1119,19 @@ class DataAssimilation:
 
                 else:
 
-                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / delta
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / (delta * np.sqrt(delta_z))
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3DR" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
+                delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
 
                 if gamma != 0.0:
 
-                    delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
                     KRMAX = self.KRMAX
 
-                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / np.sqrt(delta_z)
 
                     result_old = np.copy(field)
                     result = np.copy(field)
@@ -1137,22 +1158,22 @@ class DataAssimilation:
 
                 else:
 
-                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / delta
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / (delta * np.sqrt(delta_z))
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2DT" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
+                delta_x = self.delta_x
+                delta_y = self.delta_y
 
                 if gamma != 0.0:
 
-                    delta_x = self.delta_x
-                    delta_y = self.delta_y
                     IMAX = self.IMAX
                     JMAX = self.JMAX
                     NTDAMAX = self.NTDAMAX
 
-                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy()
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / np.sqrt(delta_x * delta_y)
 
                     result_old = np.copy(field)
                     result = np.copy(field)
@@ -1198,7 +1219,7 @@ class DataAssimilation:
 
                 else:
 
-                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / delta
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / (delta * np.sqrt(delta_x * delta_y))
 
         ds_fields = xr.merge([ds_subset_fields_params, ds_subset_fields_adj_or_adj_action_or_tlm_action])
 
@@ -1534,6 +1555,11 @@ class DataAssimilation:
             self.ds_subset_params.to_netcdf(self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_0.nc")
             self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + "state_GNHessCG_iter_0_fields.nc")
 
+            path_sico_out_nc = self.dict_sico_out_folders["nodiff"] + "/" + self.filename_final_sim_output
+            if not os.path.isfile(path_sico_out_nc):
+                raise ValueError(f"inexact_gn_hessian_cg: Final simulation output file {path_sico_out_nc} is missing.")
+            self.copy_dir(path_sico_out_nc, self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"final_sim_output_GNHessCG_iter_0_fields.nc")
+
         print("---------------------------------------------------------------------------------------------------------------")
         print(f"Initial fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
         print("---------------------------------------------------------------------------------------------------------------")
@@ -1593,7 +1619,13 @@ class DataAssimilation:
                     f.write(f"Iteration {i+1}: Cost = {self.ds_subset_costs['fc'].data[0]:.6f}, Misfit Cost = {self.ds_subset_costs['fc_data'].data[0]:.6f}, Regularization Cost = {self.ds_subset_costs['fc_reg'].data[0]:.6f}\n")
 
                 self.ds_subset_params.to_netcdf(self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}.nc")
+                ds_subset_gradient.to_netcdf(self.dirpath_store_states + "/gradient_descent/" + f"gradient_GNHessCG_iter_{i}.nc")
                 self.copy_dir(self.dict_ad_inp_nc_files["nodiff"], self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"state_GNHessCG_iter_{i+1}_fields.nc")
+
+                path_sico_out_nc = self.dict_sico_out_folders["nodiff"] + "/" + self.filename_final_sim_output
+                if not os.path.isfile(path_sico_out_nc):
+                    raise ValueError(f"inexact_gn_hessian_cg: Final simulation output file {path_sico_out_nc} is missing.")
+                self.copy_dir(path_sico_out_nc, self.dirpath_store_states + "/inexact_gn_hessian_cg/" + f"final_sim_output_GNHessCG_iter_{i+1}_fields.nc")
 
             print("---------------------------------------------------------------------------------------------------------------")
             print(f"Outer iter {i+1}, fc = {self.ds_subset_costs['fc'].data[0]}, fc_data = {self.ds_subset_costs['fc_data'].data[0]}, fc_reg = {self.ds_subset_costs['fc_reg'].data[0]}")
@@ -1935,6 +1967,57 @@ class DataAssimilation:
             ds_subset_mean_samples_squared[var].attrs = ds_subset_sample[var].attrs
         ds_subset_mean_samples_squared.attrs = ds_subset_sample.attrs
 
+        ## DIAGNOSTICS
+        #        list_0y = []
+        #        list_1y = []
+        #        list_2y = []
+        #        list_3y = []
+        #        list_4y = []
+        #        list_5y = []
+        #        list_6y = []
+        #        list_7y = []
+        #        list_8y = []
+        #        list_9y = []
+        #        list_10y = []
+        #        list_0x = []
+        #        list_1x = []
+        #        list_2x = []
+        #        list_3x = []
+        #        list_4x = []
+        #        list_5x = []
+        #        list_6x = []
+        #        list_7x = []
+        #        list_8x = []
+        #        list_9x = []
+        #        list_10x = []
+        #
+        #        print_idy = 35
+        #        print_idx = 20
+        #        print_varname = "xx_c_slide_init"
+        #
+        #        list_0y.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx])
+        #        list_1y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 1, print_idx])
+        #        list_2y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 2, print_idx])
+        #        list_3y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 3, print_idx])
+        #        list_4y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 4, print_idx])
+        #        list_5y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 5, print_idx])
+        #        list_6y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 6, print_idx])
+        #        list_7y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 7, print_idx])
+        #        list_8y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 8, print_idx])
+        #        list_9y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 9, print_idx])
+        #        list_10y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 10, print_idx])
+        #        list_0x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx])
+        #        list_1x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 1])
+        #        list_2x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 2])
+        #        list_3x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 3])
+        #        list_4x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 4])
+        #        list_5x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 5])
+        #        list_6x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 6])
+        #        list_7x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 7])
+        #        list_8x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 8])
+        #        list_9x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 9])
+        #        list_10x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 10])
+
         for i in range(N_samples-1):
 
             if type_marginals == "prior_C":
@@ -1943,6 +2026,30 @@ class DataAssimilation:
                 ds_subset_sample = self.sample_prior()
             elif type_marginals == "posterior":
                 ds_subset_sample = self.sample_posterior(U_misfit, Lambda_misfit)
+
+            ## DIAGNOSTICS
+            #            list_0y.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx])
+            #            list_1y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 1, print_idx])
+            #            list_2y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 2, print_idx])
+            #            list_3y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 3, print_idx])
+            #            list_4y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 4, print_idx])
+            #            list_5y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 5, print_idx])
+            #            list_6y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 6, print_idx])
+            #            list_7y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 7, print_idx])
+            #            list_8y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 8, print_idx])
+            #            list_9y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 9, print_idx])
+            #            list_10y.append(ds_subset_sample[print_varname + "d"].data[print_idy + 10, print_idx])
+            #            list_0x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx])
+            #            list_1x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 1])
+            #            list_2x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 2])
+            #            list_3x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 3])
+            #            list_4x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 4])
+            #            list_5x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 5])
+            #            list_6x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 6])
+            #            list_7x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 7])
+            #            list_8x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 8])
+            #            list_9x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 9])
+            #            list_10x.append(ds_subset_sample[print_varname + "d"].data[print_idy, print_idx + 10])
 
             ds_subset_mean_samples = self.linear_sum([ds_subset_mean_samples, ds_subset_sample],
                                                     [1.0, 1.0], ["tlm", "tlm"])
@@ -1954,6 +2061,28 @@ class DataAssimilation:
 
             ds_subset_mean_samples_squared = self.linear_sum([ds_subset_mean_samples_squared, ds_subset_sample_squared],
                                                             [1.0, 1.0], ["tlm", "tlm"])
+
+        ## DIAGNOSTICS
+        #        print("Pearson correlation y-direction 40 kms: ", np.corrcoef(list_0y, list_1y)[0, 1])
+        #        print("Pearson correlation y-direction 80 kms: ", np.corrcoef(list_0y, list_2y)[0, 1])
+        #        print("Pearson correlation y-direction 120 kms: ", np.corrcoef(list_0y, list_3y)[0, 1])
+        #        print("Pearson correlation y-direction 160 kms: ", np.corrcoef(list_0y, list_4y)[0, 1])
+        #        print("Pearson correlation y-direction 200 kms: ", np.corrcoef(list_0y, list_5y)[0, 1])
+        #        print("Pearson correlation y-direction 240 kms: ", np.corrcoef(list_0y, list_6y)[0, 1])
+        #        print("Pearson correlation y-direction 280 kms: ", np.corrcoef(list_0y, list_7y)[0, 1])
+        #        print("Pearson correlation y-direction 320 kms: ", np.corrcoef(list_0y, list_8y)[0, 1])
+        #        print("Pearson correlation y-direction 360 kms: ", np.corrcoef(list_0y, list_9y)[0, 1])
+        #        print("Pearson correlation y-direction 400 kms: ", np.corrcoef(list_0y, list_10y)[0, 1])
+        #        print("Pearson correlation x-direction 40 kms: ", np.corrcoef(list_0x, list_1x)[0, 1])
+        #        print("Pearson correlation x-direction 80 kms: ", np.corrcoef(list_0x, list_2x)[0, 1])
+        #        print("Pearson correlation x-direction 120 kms: ", np.corrcoef(list_0x, list_3x)[0, 1])
+        #        print("Pearson correlation x-direction 160 kms: ", np.corrcoef(list_0x, list_4x)[0, 1])
+        #        print("Pearson correlation x-direction 200 kms: ", np.corrcoef(list_0x, list_5x)[0, 1])
+        #        print("Pearson correlation x-direction 240 kms: ", np.corrcoef(list_0x, list_6x)[0, 1])
+        #        print("Pearson correlation x-direction 280 kms: ", np.corrcoef(list_0x, list_7x)[0, 1])
+        #        print("Pearson correlation x-direction 320 kms: ", np.corrcoef(list_0x, list_8x)[0, 1])
+        #        print("Pearson correlation x-direction 360 kms: ", np.corrcoef(list_0x, list_9x)[0, 1])
+        #        print("Pearson correlation x-direction 400 kms: ", np.corrcoef(list_0x, list_10x)[0, 1])
 
         ds_subset_mean_samples = self.linear_sum([ds_subset_mean_samples, ds_subset_mean_samples],
                                                 [1.0/N_samples, 0.0], ["tlm", "tlm"])
