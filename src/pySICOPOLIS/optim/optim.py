@@ -874,7 +874,11 @@ class DataAssimilation:
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
-                delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
+                delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
+                delta_z_numerator_field = np.zeros((delta_z.shape[0] + 1,), dtype = float)
+                delta_z_numerator_field[0] = delta_z[0]
+                delta_z_numerator_field[-1] = delta_z[-1]
+                delta_z_numerator_field[1:-1] = (delta_z[:-1] + delta_z[1:]) / 2.0
 
                 if gamma != 0.0:
 
@@ -889,17 +893,21 @@ class DataAssimilation:
                     for kc in range(1, KCMAX):
                         field_new[kc] = field_new[kc] - gamma*((field[kc+1] - field[kc])/delta_z[kc] - (field[kc] - field[kc-1])/delta_z[kc-1])*(2.0/(delta_z[kc]+delta_z[kc-1]))
 
-                    ds_subset_fields_tlm[var].data = field_new.copy() * np.sqrt(delta_z)
+                    ds_subset_fields_tlm[var].data = field_new.copy() * np.sqrt(delta_z_numerator_field[:, None, None])
 
                 else:
 
-                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy() * np.sqrt(delta_z)
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy() * np.sqrt(delta_z_numerator_field[:, None, None])
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3DR":
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
                 delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
+                delta_z_numerator_field = np.zeros((delta_z.shape[0] + 1,), dtype = float)
+                delta_z_numerator_field[0] = delta_z[0]
+                delta_z_numerator_field[-1] = delta_z[-1]
+                delta_z_numerator_field[1:-1] = (delta_z[:-1] + delta_z[1:]) / 2.0
 
                 if gamma != 0.0:
 
@@ -914,11 +922,11 @@ class DataAssimilation:
                     for kr in range(1, KRMAX):
                         field_new[kr] = field_new[kr] - gamma*((field[kr+1] - field[kr])/delta_z[kr] - (field[kr] - field[kr-1])/delta_z[kr-1])*(2.0/(delta_z[kr]+delta_z[kr-1]))
 
-                    ds_subset_fields_tlm[var].data = field_new.copy() * np.sqrt(delta_z)
+                    ds_subset_fields_tlm[var].data = field_new.copy() * np.sqrt(delta_z_numerator_field[:, None, None])
 
                 else:
 
-                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy() * np.sqrt(delta_z)
+                    ds_subset_fields_tlm[var].data = delta*ds_subset_fields_tlm[var].data.copy() * np.sqrt(delta_z_numerator_field[:, None, None])
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2DT":
 
@@ -1089,12 +1097,16 @@ class DataAssimilation:
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
                 delta_z = 1.e6*(self.dict_params_coords["zeta_c"][1:]-self.dict_params_coords["zeta_c"][:-1])
+                delta_z_denominator_field = np.zeros((delta_z.shape[0] + 1,), dtype = float)
+                delta_z_denominator_field[0] = delta_z[0]
+                delta_z_denominator_field[-1] = delta_z[-1]
+                delta_z_denominator_field[1:-1] = (delta_z[:-1] + delta_z[1:]) / 2.0
 
                 if gamma != 0.0:
 
                     KCMAX = self.KCMAX
 
-                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / np.sqrt(delta_z)
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / np.sqrt(delta_z_denominator_field[:, None, None])
 
                     result_old = np.copy(field)
                     result = np.copy(field)
@@ -1121,19 +1133,23 @@ class DataAssimilation:
 
                 else:
 
-                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / (delta * np.sqrt(delta_z))
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / (delta * np.sqrt(delta_z_denominator_field[:, None, None]))
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "3DR" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
                 gamma = self.dict_prior_gammas[basic_str]
                 delta = self.dict_prior_deltas[basic_str]
                 delta_z = 1.e6*(self.dict_params_coords["zeta_r"][1:]-self.dict_params_coords["zeta_r"][:-1])
+                delta_z_denominator_field = np.zeros((delta_z.shape[0] + 1,), dtype = float)
+                delta_z_denominator_field[0] = delta_z[0]
+                delta_z_denominator_field[-1] = delta_z[-1]
+                delta_z_denominator_field[1:-1] = (delta_z[:-1] + delta_z[1:]) / 2.0
 
                 if gamma != 0.0:
 
                     KRMAX = self.KRMAX
 
-                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / np.sqrt(delta_z)
+                    field = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / np.sqrt(delta_z_denominator_field[:, None, None])
 
                     result_old = np.copy(field)
                     result = np.copy(field)
@@ -1160,7 +1176,7 @@ class DataAssimilation:
 
                 else:
 
-                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / (delta * np.sqrt(delta_z))
+                    ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data.copy() / (delta * np.sqrt(delta_z_denominator_field[:, None, None]))
 
             elif self.dict_params_fields_or_scalars[basic_str] == "field" and self.dict_params_fields_num_dims[basic_str] == "2DT" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
