@@ -32,7 +32,7 @@ if __name__ == "__main__":
                 if age_c_uncert_data[kc, j, i] > 0 and age_c_data[kc, j, i] >= 0 and age_c_data[kc, j, i] <= 134000 and H_data[j, i] >= 2000.0:
                     mask_age_c[kc, j, i] = 1.0
 
-    sicopolis_dir = '/home/shreyas/update_to_develop_sicopolis/sicopolis_optim_ABZ_freq'
+    sicopolis_dir = '/home/shreyas/update_to_develop_sicopolis/sicopolis_optim_ABZ_100'
     simulation = 'grl40_bm5_paleo17a_CT4_BH0_AC_BM5_ZLC_m11ka_pkp'
     
     dict_sico_out_folder_prefixes = {"nodiff": "N",
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     zeta_r = np.arange(0.,1. + 1.0/KRMAX, 1.0/KRMAX)
     xModel40       = np.arange(-72.,97.,4.0)*10
     yModel40       = np.arange(-345.,-56.,4.0)*10
-    time_ad = np.arange(111, dtype=float)
+    time_ad = np.arange(12, dtype=float)
     IMAX = xModel40.shape[0]-1
     JMAX = yModel40.shape[0]-1
     NTDAMAX = time_ad.shape[0]-1
@@ -206,8 +206,8 @@ if __name__ == "__main__":
                          "xx_RHO_A": 0.3,
                          "xx_time_lag_asth": 0.3,
                          "xx_flex_rig_lith": 0.3,
-                         "xx_zs": 1000.0,
-                         "xx_zl": 1000.0,
+                         "xx_zs": 100.0,
+                         "xx_zl": 100.0,
                          "xx_temp_c": 0.3,
                          "xx_omega_c": 1.0,
                          "xx_age_c": 1.0,
@@ -267,6 +267,6 @@ if __name__ == "__main__":
                                 dict_og_params_fields_vals, dict_prior_params_fields_vals, dict_params_fields_num_dims, 
                                 dict_params_coords, dict_params_attrs_type, dict_params_fields_or_scalars, dict_masks_observables,
                                 dict_prior_sigmas, dict_prior_gammas, dict_prior_deltas,
-                                MAX_ITERS_SOR, OMEGA_SOR, list_fields_to_ignore, False, None, "/scratch2/shreyas/optim_ABZ_freq", 5000, None, "0006.nc")
+                                MAX_ITERS_SOR, OMEGA_SOR, list_fields_to_ignore, False, None, "/scratch2/shreyas/optim_ABZ_100", 5000, None, "0006.nc")
 
     ds = DA.inexact_gn_hessian_cg(MAX_ITERS = 100, min_alpha_cg_tol = 1.e-20, init_alpha_gd = 1.e-6, min_alpha_gd_tol = 1.e-20)

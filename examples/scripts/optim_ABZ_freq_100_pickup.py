@@ -32,7 +32,7 @@ if __name__ == "__main__":
                 if age_c_uncert_data[kc, j, i] > 0 and age_c_data[kc, j, i] >= 0 and age_c_data[kc, j, i] <= 134000 and H_data[j, i] >= 2000.0:
                     mask_age_c[kc, j, i] = 1.0
 
-    sicopolis_dir = '/home/shreyas/update_to_develop_sicopolis/sicopolis_optim_ABZ_freq'
+    sicopolis_dir = '/home/shreyas/update_to_develop_sicopolis/sicopolis_optim_ABZ_freq_100_pickup'
     simulation = 'grl40_bm5_paleo17a_CT4_BH0_AC_BM5_ZLC_m11ka_pkp'
     
     dict_sico_out_folder_prefixes = {"nodiff": "N",
@@ -206,8 +206,8 @@ if __name__ == "__main__":
                          "xx_RHO_A": 0.3,
                          "xx_time_lag_asth": 0.3,
                          "xx_flex_rig_lith": 0.3,
-                         "xx_zs": 1000.0,
-                         "xx_zl": 1000.0,
+                         "xx_zs": 100.0,
+                         "xx_zl": 100.0,
                          "xx_temp_c": 0.3,
                          "xx_omega_c": 1.0,
                          "xx_age_c": 1.0,
@@ -218,7 +218,7 @@ if __name__ == "__main__":
                          "xx_delta_tda_const": 1.0,
                          "xx_c_dis_da": 0.0,
                          "xx_q_geo": 0.0,
-                         "xx_gamma_s": 1.0,
+                         "xx_gamma_s": 0.0,
                          "xx_s_stat": 0.0,
                          "xx_beta1": 0.0,
                          "xx_beta2": 0.0,
@@ -226,9 +226,9 @@ if __name__ == "__main__":
                          "xx_mu": 0.0,
                          "xx_RHO_A": 0.0,
                          "xx_time_lag_asth": 0.0,
-                         "xx_flex_rig_lith": 1.0,
-                         "xx_zs": 1.0,
-                         "xx_zl": 1.0,
+                         "xx_flex_rig_lith": 0.0,
+                         "xx_zs": 0.0,
+                         "xx_zl": 0.0,
                          "xx_temp_c": 0.0,
                          "xx_omega_c": 0.0,
                          "xx_age_c": 0.0,
@@ -237,29 +237,57 @@ if __name__ == "__main__":
     
     dict_prior_deltas = {"xx_c_slide_init": 0.0,
                          "xx_delta_tda_const": 2.e-4,
-                         "xx_c_dis_da": 1.0,
+                         "xx_c_dis_da": 0.0,
                          "xx_q_geo": 0.0,
-                         "xx_gamma_s": 2.e-4,
-                         "xx_s_stat": 1.0,
-                         "xx_beta1": 1.0,
-                         "xx_beta2": 1.0,
-                         "xx_Pmax": 1.0,
-                         "xx_mu": 1.0,
-                         "xx_RHO_A": 1.0,
-                         "xx_time_lag_asth": 1.0,
-                         "xx_flex_rig_lith": 2.e-4,
-                         "xx_zs": 2.e-4,
-                         "xx_zl": 2.e-4,
-                         "xx_temp_c": 1.0,
-                         "xx_omega_c": 1.0,
+                         "xx_gamma_s": 0.0,
+                         "xx_s_stat": 0.0,
+                         "xx_beta1": 0.0,
+                         "xx_beta2": 0.0,
+                         "xx_Pmax": 0.0,
+                         "xx_mu": 0.0,
+                         "xx_RHO_A": 0.0,
+                         "xx_time_lag_asth": 0.0,
+                         "xx_flex_rig_lith": 0.0,
+                         "xx_zs": 0.0,
+                         "xx_zl": 0.0,
+                         "xx_temp_c": 0.0,
+                         "xx_omega_c": 0.0,
                          "xx_age_c": 1.0,
-                         "xx_temp_r": 1.0,
+                         "xx_temp_r": 0.0,
                          "xx_delta_tda": 2.e-4}
     
-    list_fields_to_ignore = ["xx_c_slide_init", "xx_q_geo"]
+    list_fields_to_ignore = ["xx_c_slide_init", "xx_c_dis_da", "xx_q_geo",
+                             "xx_gamma_s", "xx_s_stat", "xx_beta1", "xx_beta2",
+                             "xx_Pmax", "xx_mu", "xx_RHO_A", "xx_time_lag_asth",
+                             "xx_flex_rig_lith", "xx_zs", "xx_zl", "xx_temp_c",
+                             "xx_omega_c", "xx_temp_r"]
     
     MAX_ITERS_SOR = 100
     OMEGA_SOR = 1.5
+
+    ds_state = xr.open_dataset("/scratch2/shreyas/optim_ABZ_freq_100/inexact_gn_hessian_cg/state_GNHessCG_iter_28.nc")
+    ds_prior_X = xr.open_dataset("/scratch2/shreyas/optim_ABZ_freq_100/prior_X.nc")
+
+    dict_og_params_fields_vals = {"xx_c_slide_init": ds_state["xx_c_slide_init"].data.copy(),
+                                  "xx_delta_tda_const": ds_state["xx_delta_tda_const"].data.copy(),
+                                  "xx_c_dis_da": ds_state["xx_c_dis_da"].data[0],
+                                  "xx_q_geo": ds_state["xx_q_geo"].data.copy(),
+                                  "xx_gamma_s": ds_state["xx_gamma_s"].data.copy(),
+                                  "xx_s_stat": ds_state["xx_s_stat"].data[0],
+                                  "xx_beta1": ds_state["xx_beta1"].data[0],
+                                  "xx_beta2": ds_state["xx_beta2"].data[0],
+                                  "xx_Pmax": ds_state["xx_Pmax"].data[0],
+                                  "xx_mu": ds_state["xx_mu"].data[0],
+                                  "xx_RHO_A": ds_state["xx_RHO_A"].data[0],
+                                  "xx_time_lag_asth": ds_state["xx_time_lag_asth"].data[0],
+                                  "xx_flex_rig_lith": ds_state["xx_flex_rig_lith"].data.copy(),
+                                  "xx_zs": ds_state["xx_zs"].data.copy(),
+                                  "xx_zl": ds_state["xx_zl"].data.copy(),
+                                  "xx_temp_c": ds_state["xx_temp_c"].data.copy(),
+                                  "xx_omega_c": ds_state["xx_omega_c"].data.copy(),
+                                  "xx_age_c": ds_state["xx_age_c"].data.copy(),
+                                  "xx_temp_r": ds_state["xx_temp_r"].data.copy(),
+                                  "xx_delta_tda": ds_state["xx_delta_tda"].data.copy()}
 
     DA = optim.DataAssimilation(sicopolis_dir, simulation,
                                 dict_sico_out_folder_prefixes, dict_ad_exec_cmds_suffixes,
@@ -267,6 +295,6 @@ if __name__ == "__main__":
                                 dict_og_params_fields_vals, dict_prior_params_fields_vals, dict_params_fields_num_dims, 
                                 dict_params_coords, dict_params_attrs_type, dict_params_fields_or_scalars, dict_masks_observables,
                                 dict_prior_sigmas, dict_prior_gammas, dict_prior_deltas,
-                                MAX_ITERS_SOR, OMEGA_SOR, list_fields_to_ignore, False, None, "/scratch2/shreyas/optim_ABZ_freq", 5000, None, "0006.nc")
+                                MAX_ITERS_SOR, OMEGA_SOR, list_fields_to_ignore, False, None, "/scratch2/shreyas/optim_ABZ_freq_100_pickup", None, ds_prior_X, "0006.nc")
 
     ds = DA.inexact_gn_hessian_cg(MAX_ITERS = 100, min_alpha_cg_tol = 1.e-20, init_alpha_gd = 1.e-6, min_alpha_gd_tol = 1.e-20)

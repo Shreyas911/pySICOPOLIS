@@ -267,6 +267,6 @@ if __name__ == "__main__":
                                 dict_og_params_fields_vals, dict_prior_params_fields_vals, dict_params_fields_num_dims, 
                                 dict_params_coords, dict_params_attrs_type, dict_params_fields_or_scalars, dict_masks_observables,
                                 dict_prior_sigmas, dict_prior_gammas, dict_prior_deltas,
-                                MAX_ITERS_SOR, OMEGA_SOR, list_fields_to_ignore, False, None, "/scratch2/shreyas/optim_ABZ", 1000, None, "0006.nc")
+                                MAX_ITERS_SOR, OMEGA_SOR, list_fields_to_ignore, False, None, "/scratch2/shreyas/optim_ABZ", 5000, None, "0006.nc")
 
     ds = DA.inexact_gn_hessian_cg(MAX_ITERS = 100, min_alpha_cg_tol = 1.e-20, init_alpha_gd = 1.e-6, min_alpha_gd_tol = 1.e-20)
