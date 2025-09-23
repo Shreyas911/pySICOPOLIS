@@ -830,6 +830,8 @@ class DataAssimilation:
 
             if self.dict_params_fields_or_scalars[basic_str] == "scalar":
 
+                delta_x = self.delta_x
+                delta_y = self.delta_y
                 # NOTE: np.sqrt(delta_x * delta_y) should be changed to np.sqrt(delta_z) for 3D scalars, this is future work since this is good enough for now.
                 ds_subset_fields_tlm[var].data = ds_subset_fields_tlm[var].data * self.dict_prior_deltas[basic_str] * np.sqrt(delta_x * delta_y)
 
@@ -1029,6 +1031,8 @@ class DataAssimilation:
 
             if self.dict_params_fields_or_scalars[basic_str] == "scalar" and (not self.list_fields_to_ignore or (self.list_fields_to_ignore and basic_str not in self.list_fields_to_ignore)):
 
+                delta_x = self.delta_x
+                delta_y = self.delta_y
                 # NOTE: np.sqrt(delta_x * delta_y) should be changed to np.sqrt(delta_z) for 3D scalars, this is future work since this is good enough for now.
                 ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data = ds_subset_fields_adj_or_adj_action_or_tlm_action[var].data / (self.dict_prior_deltas[basic_str] * np.sqrt(delta_x * delta_y))
 
